@@ -22,10 +22,21 @@ def igl_arap(V, F, constrained, targets, initial, iterations):
     return igl.arap_solve(targets, data, initial.copy())
 
 
+def bunny_ears(V):
+    from arap import selection as sel
+
+    fixed = sel.by_coordinate(V, "y", below=0.15)
+    ears = sel.by_coordinate(V, "y", above=0.8)
+    return sel.combine(V, fixed, ears, V[ears] + [-0.45, -0.15, 0.0])
+
+
 @pytest.mark.parametrize("iterations", [1, 10])
-def test_matches_libigl(bar, iterations):
-    V, F = bar
-    c, t, _, _ = bar_bend(V)
+@pytest.mark.parametrize("name", ["bar", "bunny"])
+def test_matches_libigl(request, name, iterations):
+    # The bunny has negative cotangent weights, so this also checks the raw
+    # (clamp="none") setting that libigl uses.
+    V, F = request.getfixturevalue(name)
+    c, t = bar_bend(V)[:2] if name == "bar" else bunny_ears(V)
     d = ARAPDeformer(V, F, c, clamp="none")
     guess = d.initial_guess(t)
     ours = d.deform(t, init=guess, max_iterations=iterations, energy_tol=0.0, step_tol=0.0)

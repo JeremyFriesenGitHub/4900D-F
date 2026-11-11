@@ -50,8 +50,8 @@ def random_rotation(rng):
 def bar_bend(vertices, angle_degrees=90.0):
     """Fixed bottom of the bar; top rotated about x and moved onto an arc.
 
-    Returns ``(constrained, targets, fixed, handles)`` with ``constrained``
-    sorted, matching what ``ARAPDeformer`` expects.
+    Returns ``(constrained, targets, fixed, handles)``; ``constrained`` is
+    sorted and ``targets`` follows it.
     """
     from arap import selection
 

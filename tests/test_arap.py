@@ -168,3 +168,26 @@ def test_unknown_initial_guess_is_rejected(bar):
     c, t, _, _ = bar_bend(V)
     with pytest.raises(ValueError):
         ARAPDeformer(V, F, c).deform(t, init="magic")
+
+
+def test_constraint_order_is_up_to_the_caller(bar, rng):
+    V, F = bar
+    c, t, _, _ = bar_bend(V)
+    perm = rng.permutation(c.size)
+    ref = ARAPDeformer(V, F, c).deform(t, max_iterations=5)
+    shuffled = ARAPDeformer(V, F, c[perm]).deform(t[perm], max_iterations=5)
+    assert np.array_equal(shuffled.vertices[c], t)
+    assert np.abs(shuffled.vertices - ref.vertices).max() < 1e-10
+
+
+def test_duplicate_constraints_are_rejected(bar):
+    V, F = bar
+    with pytest.raises(ValueError, match="unique"):
+        ARAPDeformer(V, F, [0, 1, 1])
+
+
+def test_unreferenced_vertex_is_reported(cube):
+    V, F = cube
+    V2 = np.vstack([V, [5.0, 5.0, 5.0]])
+    with pytest.raises(ValueError, match="unreferenced"):
+        ARAPDeformer(V2, F, [0])

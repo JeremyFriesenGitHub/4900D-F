@@ -55,7 +55,8 @@ class ARAPDeformer:
         Rest positions p.
     faces : (m, 3) array_like of int
     constrained : array_like of int
-        Indices of all constrained vertices (fixed and handle vertices).
+        Indices of all constrained vertices (fixed and handle vertices), in
+        any order. Targets passed to ``deform`` follow the same order.
     weights : {"cotangent", "uniform"}
         Edge weights w_ij. The paper uses cotangent weights.
     clamp : {"zero", "none", "geomproc"}
@@ -67,7 +68,9 @@ class ARAPDeformer:
         start = time.perf_counter()
         self.vertices = np.array(vertices, dtype=np.float64)
         self.faces = np.array(faces, dtype=np.int64)
-        self.constrained = np.unique(np.asarray(constrained, dtype=np.int64))
+        self.constrained = np.asarray(constrained, dtype=np.int64).ravel()
+        if np.unique(self.constrained).size != self.constrained.size:
+            raise ValueError("constrained indices must be unique")
         self.weights = weights
         self.clamp = clamp
         n = self.vertices.shape[0]
@@ -96,15 +99,17 @@ class ARAPDeformer:
 
     # ------------------------------------------------------------------ setup
     def _check_components(self):
+        if self.constrained.size and (self.constrained.min() < 0
+                                      or self.constrained.max() >= self.n):
+            raise ValueError("constrained vertex index out of range")
         A = lap.adjacency_matrix(self.faces, self.n)
-        count, labels = connected_components(A, directed=False)
-        used = np.zeros(self.n, dtype=bool)
-        used[self.faces.ravel()] = True
-        missing = set(np.unique(labels[used])) - set(np.unique(labels[self.constrained]))
+        _, labels = connected_components(A, directed=False)
+        missing = set(np.unique(labels)) - set(np.unique(labels[self.constrained]))
         if missing:
             raise ValueError(
                 f"{len(missing)} connected component(s) have no constrained vertex; "
-                "add at least one constraint per component"
+                "add at least one constraint per component (a vertex that no face "
+                "uses counts as its own component, so remove unreferenced vertices)"
             )
 
     # ------------------------------------------------------------- the steps
@@ -175,7 +180,7 @@ class ARAPDeformer:
         ----------
         targets : (k, 3) array
             Positions of the constrained vertices, in the order of
-            ``self.constrained`` (sorted indices).
+            ``self.constrained`` (the order given to the constructor).
         init : str or (n, 3) array
             Initial guess method (see ``initial_guess``) or explicit positions.
         max_iterations : int

@@ -70,3 +70,21 @@ def test_unknown_method_rejected(bar):
     V, F = bar
     with pytest.raises(ValueError):
         LinearDeformer(V, F, [0], method="spline")
+
+
+@pytest.mark.parametrize("method", ["laplacian", "thin_plate"])
+def test_constraint_order_is_up_to_the_caller(bar, rng, method):
+    V, F = bar
+    c, t, _, _ = bar_bend(V)
+    perm = rng.permutation(c.size)
+    ref = LinearDeformer(V, F, c, method=method).deform(t)
+    out = LinearDeformer(V, F, c[perm], method=method).deform(t[perm])
+    assert np.array_equal(out[c], t)
+    assert np.abs(out - ref).max() < 1e-12
+
+
+def test_constrained_solver_rejects_duplicates(sphere):
+    V, F = sphere
+    L, _ = lap.mesh_laplacian(V, F)
+    with pytest.raises(ValueError, match="unique"):
+        ConstrainedSolver(L, [3, 3])

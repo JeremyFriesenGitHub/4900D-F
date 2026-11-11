@@ -63,16 +63,23 @@ def combine(vertices, fixed, handles, handle_targets):
     """Merge fixed and handle constraints into sorted ``(indices, targets)``.
 
     Fixed vertices keep their rest position. ``handle_targets`` must follow
-    the order of ``handles``. The result is sorted by vertex index, which is
-    the order ``ARAPDeformer`` expects.
+    the order of ``handles``. The result is sorted by vertex index (any
+    order works for the solvers, as long as targets follow the indices).
     """
     V = np.asarray(vertices, dtype=np.float64)
-    fixed = np.asarray(fixed, dtype=np.int64)
-    handles = np.asarray(handles, dtype=np.int64)
+    fixed = np.asarray(fixed, dtype=np.int64).ravel()
+    handles = np.asarray(handles, dtype=np.int64).ravel()
+    handle_targets = np.asarray(handle_targets, dtype=np.float64)
+    if handle_targets.shape != (handles.size, 3):
+        raise ValueError(
+            f"handle_targets must have shape ({handles.size}, 3), got {handle_targets.shape}"
+        )
     if np.intersect1d(fixed, handles).size:
         raise ValueError("a vertex cannot be both fixed and a handle")
     idx = np.concatenate([fixed, handles])
-    tgt = np.vstack([V[fixed], np.asarray(handle_targets, dtype=np.float64).reshape(-1, 3)])
+    if np.unique(idx).size != idx.size:
+        raise ValueError("fixed and handle indices must be unique")
+    tgt = np.vstack([V[fixed], handle_targets])
     order = np.argsort(idx)
     return idx[order], tgt[order]
 

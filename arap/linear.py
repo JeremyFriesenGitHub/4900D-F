@@ -30,16 +30,20 @@ class ConstrainedSolver:
 
     ``K`` must be symmetric and its free block positive definite (true for a
     mesh Laplacian when every connected component has a constrained vertex).
+    The indices may come in any order; ``values`` passed to ``solve`` must
+    follow the same order.
     """
 
     def __init__(self, K, constrained):
         K = sp.csr_matrix(K)
         n = K.shape[0]
-        constrained = np.unique(np.asarray(constrained, dtype=np.int64))
+        constrained = np.asarray(constrained, dtype=np.int64).ravel()
         if constrained.size == 0:
             raise ValueError("at least one constrained vertex is required")
         if constrained.min() < 0 or constrained.max() >= n:
             raise ValueError("constrained vertex index out of range")
+        if np.unique(constrained).size != constrained.size:
+            raise ValueError("constrained indices must be unique")
         mask = np.ones(n, dtype=bool)
         mask[constrained] = False
         self.n = n

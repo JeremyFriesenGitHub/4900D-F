@@ -197,7 +197,7 @@ class ARAPDeformer:
         """
         constrained, targets = self._targets(targets)
         timings = {}
-        start = time.perf_counter()
+        begin = start = time.perf_counter()
         if isinstance(init, str):
             current = self.initial_guess(targets, method=init)
         else:
@@ -211,14 +211,15 @@ class ARAPDeformer:
         wanted = set(int(k) for k in snapshot_iterations)
         snapshots = {0: guess.copy()} if 0 in wanted else {}
 
-        local_time = global_time = 0.0
-        t = time.perf_counter()
+        start = time.perf_counter()
         rotations = self.local_step(current)
-        local_time += time.perf_counter() - t
         energy = self.energy(current, rotations)
+        timings["initial_rotations"] = time.perf_counter() - start
         energies = [energy]
         converged = False
         iterations = 0
+        local_time = global_time = 0.0
+        loop_start = time.perf_counter()
         for iterations in range(1, max_iterations + 1):
             t = time.perf_counter()
             updated = self.global_step(rotations, targets)
@@ -240,10 +241,14 @@ class ARAPDeformer:
                 converged = True
                 break
 
+        end = time.perf_counter()
+        # local_steps and global_steps cover the two steps only; per_iteration
+        # also includes the energy and the convergence test.
         timings["local_steps"] = local_time
         timings["global_steps"] = global_time
-        timings["iterations_total"] = local_time + global_time
-        timings["per_iteration"] = (local_time + global_time) / max(iterations, 1)
+        timings["iterations_total"] = end - loop_start
+        timings["per_iteration"] = (end - loop_start) / max(iterations, 1)
+        timings["total"] = end - begin
         return ARAPResult(
             vertices=current,
             rotations=rotations,

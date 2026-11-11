@@ -112,7 +112,8 @@ def test_bar_bend_converges_monotonically_and_meets_constraints(bar):
     assert np.array_equal(result.snapshots[0], result.initial_guess)
     for key in ("factorization", "weights"):
         assert key in d.timings
-    for key in ("initial_guess", "local_steps", "global_steps", "per_iteration"):
+    for key in ("initial_guess", "initial_rotations", "local_steps", "global_steps",
+                "iterations_total", "per_iteration", "total"):
         assert key in result.timings
 
 

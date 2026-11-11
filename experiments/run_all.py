@@ -1099,6 +1099,7 @@ DOC_FIGURES = [
     "large_rotations/twist_180.png",
     "large_rotations/twist_270.png",
     "large_rotations/twist_steps.png",
+    "large_rotations/twist_narrowest.png",
     "triangulation/cotangent.png",
     "triangulation/uniform.png",
     "point_handle/bar.png",

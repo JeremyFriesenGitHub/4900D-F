@@ -22,7 +22,8 @@ from arap import laplacian as lap
 from arap import reference
 from arap import selection as sel
 from arap.meshio import constraint_colors, load_mesh, save_mesh
-from arap.metrics import area_volume_change, edge_length_error, per_vertex_stretch
+from arap.metrics import (area_volume_change, edge_length_error, per_vertex_stretch,
+                          self_intersections)
 from arap.solver import ARAPDeformer
 from arap.viz import plot_energy, plot_lines, plot_scaling, render_panels
 
@@ -30,6 +31,12 @@ from . import scenarios as S
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAX_ITERATIONS = 1000
+# Stopping rule for the large rotations: tighter and with a higher cap than
+# the default, because near the point where the even twist stops being a
+# minimum the energy is almost flat and the default rule stops early.
+LARGE_ROTATION_RULE = dict(max_iterations=10000, energy_tol=1e-8, step_tol=1e-6)
+# Stopping rule for the stability check: much tighter than the default.
+NUDGE_RULE = dict(max_iterations=5000, energy_tol=1e-10, step_tol=1e-8)
 
 
 # ---------------------------------------------------------------- helpers
@@ -79,11 +86,20 @@ def median_time(fn, repeats=5, warmup=True):
 
 
 def side_rings(rest):
-    """Vertex indices of each ring of side vertices of a regular bar along z, bottom to top."""
+    """Vertex indices of each ring of side vertices of a bar along z, bottom to top.
+
+    The two end rings are exactly level (also on ``scenarios.irregular_bar``),
+    so their size gives the number of sides; every other side vertex goes to
+    the ring whose height is nearest, which allows jittered rings.
+    """
     r = np.hypot(rest[:, 0], rest[:, 1])
     side = np.flatnonzero(r > 0.5 * r.max())
-    levels = np.unique(np.round(rest[side, 2], 9))
-    return [side[np.isclose(rest[side, 2], z)] for z in levels]
+    z = rest[side, 2]
+    z0, z1 = z.min(), z.max()
+    sides = np.count_nonzero(np.isclose(z, z0))
+    rings = side.size // sides
+    level = np.rint((z - z0) / (z1 - z0) * (rings - 1)).astype(int)
+    return [side[level == k] for k in range(rings)]
 
 
 def twist_angle(rest, deformed, min_coherence=0.5):
@@ -95,7 +111,11 @@ def twist_angle(rest, deformed, min_coherence=0.5):
     neighbouring rings differ by less than 180 degrees. When a ring is
     pinched or folded onto itself, its vertices' turn angles no longer agree
     (the length of their mean unit vector drops below ``min_coherence``), the
-    ring has no angle, and the twist is undefined: NaN is returned.
+    ring has no angle, and the twist is undefined: NaN is returned. NaN is
+    also returned when two neighbouring rings differ by more than 90 degrees,
+    since the direction of such a jump (and so the sign of the twist) would
+    be decided by rounding. This is a threshold on how well the vertices
+    agree, not a test for folded triangles.
     """
     ring_angles = []
     for ring in side_rings(rest):
@@ -107,6 +127,8 @@ def twist_angle(rest, deformed, min_coherence=0.5):
             return float("nan")
         ring_angles.append(np.angle(mean))
     unwrapped = np.unwrap(ring_angles)
+    if np.any(np.abs(np.diff(unwrapped)) > 0.5 * np.pi):
+        return float("nan")
     return float(np.degrees(unwrapped[-1] - unwrapped[0]))
 
 
@@ -155,15 +177,17 @@ def rotation_angle(rest_points, deformed_points):
     return float(np.degrees(np.arccos(np.clip(0.5 * (np.trace(R) - 1.0), -1.0, 1.0))))
 
 
-def stepped(deformer, targets_at, angles):
+def stepped(deformer, targets_at, angles, **rule):
     """Solve for each handle angle in turn, starting from the previous result.
 
     This is the paper's interactive setting, where the previous frame is the
-    initial guess. Yields ``(angle, result, iterations so far)``.
+    initial guess. ``rule`` is passed to ``deform`` (default: at most
+    ``MAX_ITERATIONS`` iterations). Yields ``(angle, result, iterations so far)``.
     """
+    rule = dict(dict(max_iterations=MAX_ITERATIONS), **rule)
     current, total = "laplacian", 0
     for angle in angles:
-        result = deformer.deform(targets_at(angle), init=current, max_iterations=MAX_ITERATIONS)
+        result = deformer.deform(targets_at(angle), init=current, **rule)
         current, total = result.vertices, total + result.iterations
         yield angle, result, total
 
@@ -254,7 +278,7 @@ def showcase(out, scenario_name):
     c, t = sc.constraints
     d = ARAPDeformer(V, F, c)
     snaps = (0, 1, 2, 4, 10) if scenario_name == "bar_bend" else ()
-    result = d.deform(t, max_iterations=MAX_ITERATIONS, snapshot_iterations=snaps)
+    result = d.deform(t, max_iterations=MAX_ITERATIONS, snapshot_iterations=snaps + (100,))
     colors = constraint_colors(V.shape[0], sc.fixed, sc.handles)
     if scenario_name == "bar_twist":
         # Stripes make the twist visible; constrained vertices keep their colour.
@@ -292,6 +316,10 @@ def showcase(out, scenario_name):
     metrics = summarize(result, V, F)
     metrics.update(vertices=int(V.shape[0]), faces=int(F.shape[0]), constrained=int(c.size),
                    setup=d.timings, description=sc.description)
+    # How much the shape still changes after the first hundred iterations.
+    if 100 in result.snapshots:
+        metrics["moved_after_iteration_100"] = float(
+            np.max(np.linalg.norm(result.vertices - result.snapshots[100], axis=1)) / d.diagonal)
     if scenario_name == "hinge":
         # The top block should end up as a rigid copy of itself.
         # Faces of the top block, without those inside the handle (which the
@@ -306,16 +334,25 @@ def showcase(out, scenario_name):
 
 
 def weights(out):
-    """Cotangent against uniform edge weights (paper Section 3)."""
+    """Cotangent against uniform edge weights (paper Section 3).
+
+    The scanned meshes have obtuse triangles, so the cotangent rows also
+    depend on the clamp; "cotangent, raw" uses the unclamped weights.
+    """
     rows = {}
+    variants = {"cotangent": ("cotangent", "zero"), "uniform": ("uniform", "zero"),
+                "cotangent, raw": ("cotangent", "none")}
     for name in ("bunny_ears", "camel_drink"):
         sc = S.ALL[name]()
         V, F = sc.vertices, sc.faces
         c, t = sc.constraints
         panels, rows[name] = [], {}
-        for w in ("cotangent", "uniform"):
-            r = ARAPDeformer(V, F, c, weights=w).deform(t, max_iterations=MAX_ITERATIONS)
-            rows[name][w] = summarize(r, V, F)
+        for label, (w, clamp_mode) in variants.items():
+            r = ARAPDeformer(V, F, c, weights=w, clamp=clamp_mode).deform(
+                t, max_iterations=MAX_ITERATIONS)
+            rows[name][label] = summarize(r, V, F)
+            if clamp_mode == "none":
+                continue
             panels.append(dict(vertices=r.vertices, faces=F, title=f"{w} weights",
                                colors=stretch_colors(V, r.vertices, F)))
         render_panels(panels, os.path.join(out, "weights", f"{name}.png"), view=sc.view,
@@ -503,9 +540,12 @@ def large_rotations(out):
     ``steps``: the handle moves 10 degrees at a time and each solve starts
     from the previous result, as in the paper's interactive use.
     Bends use a thinner bar (radius 0.05), since bending the default bar by
-    270 degrees would compress its inner side by about half.
+    270 degrees would compress its inner side by about half. Twists use the
+    default (slightly jittered) twist bar, see ``scenarios.bar_twist``. Every
+    solve uses ``LARGE_ROTATION_RULE``.
     """
     step = 10
+    rule = LARGE_ROTATION_RULE
     rows = {"bend": {}, "twist": {}}
     for kind, angles in (("bend", (90, 180, 270)), ("twist", (90, 180, 270, 360))):
         if kind == "bend":
@@ -524,16 +564,18 @@ def large_rotations(out):
             free = np.setdiff1d(np.arange(V.shape[0]), c)
             colors[free] = stripe_colors(V)[free]
         # One stepped run up to the largest angle passes through the smaller ones.
-        steps, trace = {}, []
-        for a, r, total in stepped(d, targets_at, range(step, max(angles) + 1, step)):
+        steps, trace, previous = {}, [], 0
+        for a, r, total in stepped(d, targets_at, range(step, max(angles) + 1, step), **rule):
             if kind == "twist":
                 trace.append((a, twist_angle(V, r.vertices), narrowest_ring(V, r.vertices),
-                              r.energies[-1]))
+                              self_intersections(r.vertices, F), r.energies[-1],
+                              total - previous, r.converged))
+            previous = total
             if a in angles:
                 steps[a] = (r, total)
         for angle in angles:
             t = targets_at(angle)
-            results = {init: (d.deform(t, init=init, max_iterations=MAX_ITERATIONS), None)
+            results = {init: (d.deform(t, init=init, **rule), None)
                        for init in ("laplacian", "thin_plate")}
             results["steps"] = steps[angle]
             row = {}
@@ -541,6 +583,7 @@ def large_rotations(out):
                 m = summarize(r, V, F)
                 if total is not None:
                     m["iterations"] = total
+                m["self_intersections"] = self_intersections(r.vertices, F)
                 if kind == "twist":
                     m["twist_achieved"] = twist_angle(V, r.vertices)
                     m["narrowest_ring"] = narrowest_ring(V, r.vertices)
@@ -558,39 +601,79 @@ def large_rotations(out):
                               view=sc.view, vertical_axis=sc.up,
                               title=f"{kind} by {angle} degrees")
         if trace:
-            a, reached, narrowest, energy = np.array(trace).T
+            a, reached, narrowest, crossings, energy, iterations, converged = map(
+                np.array, zip(*trace))
             # Gaps (NaN) where a ring has folded over itself and has no twist angle.
             plot_lines(a, {"twist of the result": reached}, os.path.join(
                 out, "large_rotations", "twist_steps.png"),
                 xlabel="handle rotation (degrees)", ylabel="twist reached (degrees)",
                 title=f"twist in {step}-degree steps (gap: a ring folded, no twist angle)",
                 reference=("handle rotation", a, a))
+            plot_lines(a, {"narrowest cross-section": narrowest}, os.path.join(
+                out, "large_rotations", "twist_narrowest.png"),
+                xlabel="handle rotation (degrees)", ylabel="fraction of rest area",
+                title=f"narrowest cross-section, {step}-degree steps")
             rows["twist_steps"] = {"handle": a.tolist(), "reached": reached.tolist(),
                                    "narrowest_ring": narrowest.tolist(),
-                                   "energy": energy.tolist()}
+                                   "self_intersections": crossings.tolist(),
+                                   "energy": energy.tolist(), "iterations": iterations.tolist(),
+                                   "converged": converged.tolist()}
     return rows
+
+
+def centre_line_kink(rest, deformed):
+    """Sharpest turn of a bar's centre line divided by its mean turn.
+
+    The centre line joins the centroids of the rings of side vertices; the
+    turn at a ring is the angle between the segments before and after it.
+    An even arc gives 1; a bend concentrated in a few rings gives much more.
+    Returns None when the rings are not level (an irregular mesh), since
+    the uneven spacing of their centroids would then dominate.
+    """
+    rings = side_rings(rest)
+    if any(np.ptp(rest[ring, 2]) > 1e-9 for ring in rings):
+        return None
+    c = np.array([deformed[ring].mean(axis=0) for ring in rings])
+    d = np.diff(c, axis=0)
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+    turn = np.arccos(np.clip(np.einsum("ij,ij->i", d[:-1], d[1:]), -1.0, 1.0))
+    if turn.mean() < 1e-12:
+        return 1.0  # a straight line: evenly bent by nothing
+    return float(turn.max() / turn.mean())
 
 
 def triangulation(out):
     """The 90-degree bar bend on different meshes of the same bar.
 
     Only the end caps are constrained, so the constraints mean the same on
-    every mesh. Each result is compared with the 20 x 41 cotangent result at
-    800 fixed points of the bar's side (``bar_surface_points``).
+    every mesh. Each result is compared at 800 fixed points of the bar's side
+    (``bar_surface_points``) with the 20 x 41 result, and with its own mirror
+    image: the bend is symmetric about the plane x = 0, and so is a regular
+    bar as a set of points, but its triangles are not, because every quad
+    has its diagonal the same way round.
     """
+    regular = S.bar(rings=41, sides=20)
     meshes = {
         "12 x 25": S.bar(rings=25, sides=12),
-        "20 x 41": S.bar(rings=41, sides=20),
-        "16 x 81 (long, thin triangles)": S.bar(rings=81, sides=16),
+        "20 x 41": regular,
+        "20 x 41, diagonals flipped": (regular[0], S.flip_diagonals(*regular)),
         "20 x 41 irregular": S.irregular_bar(rings=41, sides=20),
+        "16 x 81 (long, thin triangles)": S.bar(rings=81, sides=16),
+        "12 x 81": S.bar(rings=81, sides=12),
+        "20 x 81": S.bar(rings=81, sides=20),
+        "12 x 161": S.bar(rings=161, sides=12),
         "32 x 41": S.bar(rings=41, sides=32),
         "32 x 81": S.bar(rings=81, sides=32),
         "48 x 77": S.bar(rings=77, sides=48),
     }
     rng = np.random.default_rng(1)
     samples = np.column_stack([rng.uniform(-np.pi, np.pi, 800), rng.uniform(-0.45, 0.45, 800)])
+    # The same points mirrored in x = 0: angle t becomes pi - t.
+    mirrored = samples.copy()
+    mirrored[:, 0] = (np.pi - samples[:, 0] + np.pi) % (2.0 * np.pi) - np.pi
+    flip_x = np.array([-1.0, 1.0, 1.0])
     reference = ("cotangent", "20 x 41")
-    rows, points, panels = {}, {}, {}
+    rows, points, panels, rest_points, results = {}, {}, {}, {}, {}
     for w in ("cotangent", "uniform"):
         rows[w], panels[w] = {}, []
         for name, (V, F) in meshes.items():
@@ -600,24 +683,50 @@ def triangulation(out):
             c, t = sel.combine(V, fixed, handles, S.bend_targets(V, handles, 90.0))
             d = ARAPDeformer(V, F, c, weights=w)
             r = d.deform(t, max_iterations=MAX_ITERATIONS)
+            results[w, name] = r.vertices
             points[w, name] = bar_surface_points(V, F, r.vertices, samples)
+            rest_points[name] = bar_surface_points(V, F, V, samples)
+            mirror = bar_surface_points(V, F, r.vertices, mirrored) * flip_x
+            asym = np.linalg.norm(points[w, name] - mirror, axis=1) / d.diagonal
             m = summarize(r, V, F)
-            m.update(vertices=int(V.shape[0]), diagonal=d.diagonal)
+            m.update(vertices=int(V.shape[0]), diagonal=d.diagonal,
+                     mirror_asymmetry_rms=float(np.sqrt(np.mean(asym ** 2))),
+                     mirror_asymmetry_max=float(np.max(asym)),
+                     kink=centre_line_kink(V, r.vertices))
             rows[w][name] = m
-            panels[w].append(dict(vertices=r.vertices, faces=F, title=name.split(" (")[0],
-                                  colors=stretch_colors(V, r.vertices, F)))
+            if name in ("12 x 25", "20 x 41", "16 x 81 (long, thin triangles)", "20 x 81",
+                        "12 x 161", "32 x 41", "48 x 77"):
+                panels[w].append(dict(vertices=r.vertices, faces=F, title=name.split(" (")[0],
+                                      colors=stretch_colors(V, r.vertices, F)))
     for (w, name), p in points.items():
         diagonal = rows[w][name].pop("diagonal")
         gap = np.linalg.norm(p - points[reference], axis=1) / diagonal
         # Triangulation dependence alone: against the same weighting's 20 x 41 result.
         same = np.linalg.norm(p - points[w, reference[1]], axis=1) / diagonal
+        # How far apart the meshes' sample points are before any deformation.
+        floor = np.linalg.norm(rest_points[name] - rest_points[reference[1]], axis=1) / diagonal
         rows[w][name].update(distance_rms=float(np.sqrt(np.mean(gap ** 2))),
                              distance_max=float(np.max(gap)),
-                             distance_same_weights_rms=float(np.sqrt(np.mean(same ** 2))))
+                             distance_same_weights_rms=float(np.sqrt(np.mean(same ** 2))),
+                             distance_at_rest_rms=float(np.sqrt(np.mean(floor ** 2))))
+    # Vertex by vertex on the regular 20 x 41 mesh, free of any interpolation:
+    # the vertex at (-x, y, z) of each vertex, and the effect of the flip.
+    V = regular[0]
+    mirror = np.array([np.argmin(np.linalg.norm(V - v * flip_x, axis=1)) for v in V])
+    assert np.allclose(V[mirror], V * flip_x)
+    diagonal = float(np.linalg.norm(np.ptp(V, axis=0)))
+    vertices = {}
+    for w in rows:
+        X = results[w, "20 x 41"]
+        asym = np.linalg.norm(X - X[mirror] * flip_x, axis=1) / diagonal
+        flip = np.linalg.norm(X - results[w, "20 x 41, diagonals flipped"], axis=1) / diagonal
+        vertices[w] = {"mirror_asymmetry_max": float(asym.max()),
+                       "flip_moves_rms": float(np.sqrt(np.mean(flip ** 2))),
+                       "flip_moves_max": float(flip.max())}
     for w, row in panels.items():
         render_panels(row, os.path.join(out, "triangulation", f"{w}.png"), view=(10, 0),
                       panel_size=2.4, title=f"{w} weights (sides x rings)")
-    return rows
+    return {"meshes": rows, "regular_20x41_vertices": vertices}
 
 
 def point_handle(out):
@@ -657,6 +766,98 @@ def point_handle(out):
     return rows
 
 
+def stability(out):
+    """Nudge a result and solve again: is it a minimum or a balanced unstable state?
+
+    The stopping rule cannot tell a minimum from a balanced state that is not
+    one (a saddle), and a perfectly symmetric start can stay on such a state.
+    Each free vertex is moved at random by up to 0.1% of the diagonal and the
+    solve is repeated with a much tighter rule (``NUDGE_RULE``). From a
+    minimum the energy returns to the same value; from a saddle it ends lower.
+    """
+    rng = np.random.default_rng(3)
+    rule = LARGE_ROTATION_RULE
+
+    def twist(angle, jitter=0.02):
+        sc = S.bar_twist(angle=angle, jitter=jitter)
+        d = ARAPDeformer(sc.vertices, sc.faces, sc.constraints[0])
+        return d, sc.constraints[1], d.deform(sc.constraints[1], max_iterations=MAX_ITERATIONS)
+
+    def thin_bend(how):
+        sc = S.bar_bend(rings=61, sides=20, radius=0.05)
+        V = sc.vertices
+        d = ARAPDeformer(V, sc.faces, sc.constraints[0])
+        targets_at = lambda a: sel.combine(V, sc.fixed, sc.handles,
+                                           S.bend_targets(V, sc.handles, a))[1]
+        if how == "laplacian":
+            return d, targets_at(270), d.deform(targets_at(270), **rule)
+        *_, (_, r, _) = stepped(d, targets_at, range(10, 271, 10), **rule)
+        return d, targets_at(270), r
+
+    def twist_steps(angle):
+        sc = S.bar_twist()
+        V = sc.vertices
+        d = ARAPDeformer(V, sc.faces, sc.constraints[0])
+        targets_at = lambda a: sel.combine(V, sc.fixed, sc.handles, sel.rigid_targets(
+            V[sc.handles], sel.rotation("z", a), pivot=np.zeros(3)))[1]
+        *_, (_, r, _) = stepped(d, targets_at, range(10, angle + 1, 10), **rule)
+        return d, targets_at(angle), r
+
+    def default(name):
+        sc = S.ALL[name]()
+        d = ARAPDeformer(sc.vertices, sc.faces, sc.constraints[0])
+        return d, sc.constraints[1], d.deform(sc.constraints[1], max_iterations=MAX_ITERATIONS)
+
+    def end_caps(sides, rings):
+        V, F = S.bar(rings=rings, sides=sides)
+        fixed = np.flatnonzero(V[:, 2] <= V[:, 2].min() + 1e-9)
+        handles = np.flatnonzero(V[:, 2] >= V[:, 2].max() - 1e-9)
+        c, t = sel.combine(V, fixed, handles, S.bend_targets(V, handles, 90.0))
+        d = ARAPDeformer(V, F, c)
+        return d, t, d.deform(t, max_iterations=MAX_ITERATIONS)
+
+    def one_vertex():
+        sc = S.bar_bend()
+        V = sc.vertices
+        pole = int(np.argmin(np.linalg.norm(V - [0.0, 0.0, V[:, 2].max()], axis=1)))
+        shift = S.bend_targets(V, sc.handles, 90.0)[sc.handles == pole][0] - V[pole]
+        c, t = sel.combine(V, sc.fixed, np.array([pole]), V[[pole]] + shift)
+        d = ARAPDeformer(V, sc.faces, c)
+        return d, t, d.deform(t, max_iterations=MAX_ITERATIONS)
+
+    cases = {
+        "bar twist 100, regular bar": lambda: twist(100, jitter=0.0),
+        "bar twist 105, regular bar": lambda: twist(105, jitter=0.0),
+        "bar twist 110, regular bar": lambda: twist(110, jitter=0.0),
+        "bar twist 135, regular bar": lambda: twist(135, jitter=0.0),
+        "bar twist 135 (default, jittered bar)": lambda: twist(135),
+        "bar bend 90 (default)": lambda: default("bar_bend"),
+        "bend 270, thin bar, Laplacian start": lambda: thin_bend("laplacian"),
+        "bend 270, thin bar, 10-degree steps": lambda: thin_bend("steps"),
+        "twist 180, 10-degree steps": lambda: twist_steps(180),
+        "bend 90, one handle vertex": one_vertex,
+        "bend 90, 32 x 81, end caps only": lambda: end_caps(32, 81),
+    }
+    rows = {}
+    for name, build in cases.items():
+        d, t, r = build()
+        X = r.vertices
+        noise = rng.uniform(-1.0, 1.0, X.shape)
+        noise *= 1e-3 * d.diagonal / np.linalg.norm(noise, axis=1).max()
+        noise[d.constrained] = 0.0
+        again = d.deform(t, init=X + noise, **NUDGE_RULE)
+        rows[name] = {
+            "energy": r.energies[-1],
+            "energy_after_nudge": again.energies[-1],
+            "energy_change": again.energies[-1] / r.energies[-1] - 1.0,
+            "moved_over_diagonal": float(np.max(np.linalg.norm(again.vertices - X, axis=1))
+                                         / d.diagonal),
+            "iterations_after_nudge": again.iterations,
+            "converged_after_nudge": again.converged,
+        }
+    return rows
+
+
 # ----------------------------------------------------------------- report
 def write_summary(metrics, path):
     parts = ["# Experiment summary", "",
@@ -674,12 +875,13 @@ def write_summary(metrics, path):
                          m["iterations_to_1pct"],
                          fmt(m["edge_error_initial"]["rms_relative"]),
                          fmt(m["edge_error_final"]["rms_relative"]),
+                         fmt(m["moved_after_iteration_100"], 2) if "moved_after_iteration_100" in m else "-",
                          fmt(m["setup"]["weights"] + m["setup"]["factorization"]),
                          fmt(1000 * m["timings"]["per_iteration"])])
         parts += ["## Deformations", "", markdown_table(
             ["scenario", "vertices", "constrained", "iterations", "converged",
              "energy never rose", "iterations to within 1%", "edge error Laplacian", "edge error ARAP",
-             "setup (s)", "ms / iteration"], rows), ""]
+             "largest move after iteration 100", "setup (s)", "ms / iteration"], rows), ""]
         rows = []
         for k in shows:
             m = metrics[k]
@@ -699,10 +901,13 @@ def write_summary(metrics, path):
                       f"{fmt(h['laplacian']['rms_relative'])}, ARAP {fmt(h['arap']['rms_relative'])}.", ""]
     if "weights" in metrics:
         rows = [[name, w, fmt(m["edge_error_final"]["rms_relative"]),
-                 fmt(m["edge_error_final"]["max_abs_relative"]), m["iterations"]]
+                 fmt(m["edge_error_final"]["max_abs_relative"]), m["iterations"],
+                 fmt(m["energy_final"])]
                 for name, by_w in metrics["weights"].items() for w, m in by_w.items()]
-        parts += ["## Edge weights", "", markdown_table(
-            ["scenario", "weights", "edge error (RMS)", "edge error (max)", "iterations"], rows), ""]
+        parts += ["## Edge weights", "", "\"cotangent, raw\": negative cotangent weights "
+                  "are kept (`clamp=\"none\"`); the other rows clamp them to zero.", "",
+                  markdown_table(["scenario", "weights", "edge error (RMS)", "edge error (max)",
+                                  "iterations", "energy"], rows), ""]
     if "clamp" in metrics:
         rows = [[name, mode, fmt(m["negative_weight_fraction"]), fmt(m["max_drift_over_diagonal"]),
                  fmt(m["min_energy"]),
@@ -760,47 +965,81 @@ def write_summary(metrics, path):
                                  fmt(m["energy_final"]),
                                  fmt(m["edge_error_final"]["rms_relative"]),
                                  pct(m["shape_change_final"]["volume_change"]),
+                                 m["self_intersections"],
                                  twist_cell(m),
                                  fmt(m["narrowest_ring"], 2) if "narrowest_ring" in m else "-"])
         parts += ["## Large rotations", "",
-                  "Bends use a bar of radius 0.05, twists the default bar. \"steps\" moves the "
+                  f"Bends use a bar of radius 0.05, twists the default (slightly jittered) bar. "
+                  f"Every solve stops when an iteration lowers the energy by less than "
+                  f"{LARGE_ROTATION_RULE['energy_tol']:g} of the starting energy and moves no vertex "
+                  f"more than {LARGE_ROTATION_RULE['step_tol']:g} of the diagonal, or after "
+                  f"{LARGE_ROTATION_RULE['max_iterations']} iterations. \"steps\" moves the "
                   "handle 10 degrees at a time and starts each solve from the previous result; "
                   "its iteration count is the total over all steps and \"converged\" refers to "
-                  "the last step. The twist column is the twist of the result, measured "
-                  "ring by ring along the bar (\"folded\": some ring folds over itself, so its "
-                  "vertices no longer agree on an angle and the twist is undefined). \"narrowest\" is the smallest cross-section area "
-                  "along the bar as a fraction of its rest area (the area each ring winds around, seen "
-                  "along the bar). A volume change below -100 % "
-                  "means the surface passes through itself and parts of it are inside out.", "",
+                  "the last step. \"crossings\" counts the pairs of an edge and a triangle that "
+                  "pass through each other (0: the surface does not cross itself). The twist column "
+                  "is the twist of the result, measured ring by ring along the bar (\"folded\": "
+                  "the vertices of some ring turned by angles so different that the length of "
+                  "their mean direction is below 0.5, so that ring has no angle and the twist is "
+                  "undefined). \"narrowest\" is the smallest area that a ring of side vertices "
+                  "winds around when it is projected along the bar's axis, as a fraction of its "
+                  "rest area; once rings tilt this projected area is smaller than a cut "
+                  "across the bar. Volume changes are of the signed volume: where the surface "
+                  "crosses itself, parts that are turned inside out count negatively, and below "
+                  "-100 % the signed volume is negative.", "",
                   markdown_table(["deformation", "degrees", "start", "iterations", "converged",
-                                  "energy", "edge error", "volume change", "twist reached",
-                                  "narrowest"], rows), ""]
+                                  "energy", "edge error", "volume change", "crossings",
+                                  "twist reached", "narrowest"], rows), ""]
         steps = metrics["large_rotations"].get("twist_steps")
         if steps:
-            rows = [[fmt(int(a)), twist_cell({"t": t}, "t"), fmt(n, 2), fmt(e)]
-                    for a, t, n, e in zip(steps["handle"], steps["reached"],
-                                          steps["narrowest_ring"], steps["energy"])]
+            rows = [[fmt(int(a)), twist_cell({"t": t}, "t"), fmt(n, 2), k, fmt(e), i,
+                     fmt(ok)]
+                    for a, t, n, k, e, i, ok in zip(
+                        steps["handle"], steps["reached"], steps["narrowest_ring"],
+                        steps["self_intersections"], steps["energy"], steps["iterations"],
+                        steps["converged"])]
             parts += ["Twist in 10-degree steps, after each step:", "",
-                      markdown_table(["handle rotation", "twist reached", "narrowest", "energy"],
-                                     rows), ""]
+                      markdown_table(["handle rotation", "twist reached", "narrowest",
+                                      "crossings", "energy", "iterations", "converged"], rows), ""]
     if "triangulation" in metrics:
+        tri = metrics["triangulation"]["meshes"]
+        share = lambda x: f"{100 * x:.2f}%"
         rows = [[w, name, m["vertices"], m["iterations"], fmt(m["converged"]),
                  fmt(m["energy_final"]), fmt(m["edge_error_final"]["rms_relative"]),
-                 fmt(m["distance_rms"], 2), fmt(m["distance_max"], 2),
-                 fmt(m["distance_same_weights_rms"], 2),
+                 share(m["distance_rms"]), share(m["distance_same_weights_rms"]),
+                 share(m["mirror_asymmetry_rms"]), share(m["mirror_asymmetry_max"]),
+                 "-" if m["kink"] is None else fmt(m["kink"], 2),
                  pct(m["shape_change_final"]["volume_change"])]
-                for w, by_mesh in metrics["triangulation"].items() for name, m in by_mesh.items()]
+                for w, by_mesh in tri.items() for name, m in by_mesh.items()]
+        floor = max(m["distance_at_rest_rms"] for m in tri["cotangent"].values())
+        vert = metrics["triangulation"]["regular_20x41_vertices"]
         parts += ["## Triangulation and resolution (bar bent by 90 degrees)", "",
                   "Meshes are named sides x rings. Only the end caps are constrained. "
-                  "Distances are to the 20 x 41 cotangent result at 800 fixed points of the "
-                  "bar's side; the last distance column is to the 20 x 41 result with the "
-                  "same weights. Cotangent energies of different meshes are comparable on "
-                  "the regular meshes only: the irregular mesh has negative cotangent weights, "
-                  "which are clamped to zero.", "",
+                  "Distances are measured at 800 fixed points of the bar's side, as a share of the "
+                  "bounding-box diagonal, to the 20 x 41 cotangent result and to the 20 x 41 "
+                  "result with the same weights. Before any deformation these points already "
+                  f"differ by up to {share(floor)} (RMS) between meshes, since each side is a "
+                  "polygon with its own number of sides. The bend is symmetric about the plane "
+                  "x = 0; \"mirror asymmetry\" is the distance between the result and its mirror "
+                  "image at the same points. On a regular mesh the points and their mirror images "
+                  "lie in triangles whose diagonals run the other way, so an exactly symmetric "
+                  "result still shows a few hundredths of a percent there. \"kink\" is the "
+                  "sharpest turn of the centre line from one ring to the next divided by its mean "
+                  "turn (1 for an even arc; \"-\": the rings of the irregular mesh are not level). "
+                  "Cotangent energies of different meshes are comparable on the regular meshes "
+                  "only: the irregular mesh has negative cotangent weights, which are clamped "
+                  "to zero.", "",
                   markdown_table(["weights", "mesh", "vertices", "iterations", "converged",
-                                  "energy", "edge error", "distance (RMS)", "distance (max)",
-                                  "distance to same weights' 20 x 41 (RMS)", "volume change"],
-                                 rows), ""]
+                                  "energy", "edge error", "distance to cotangent 20 x 41 (RMS)",
+                                  "distance to same weights' 20 x 41 (RMS)",
+                                  "mirror asymmetry (RMS)", "mirror asymmetry (max)", "kink",
+                                  "volume change"], rows), "",
+                  "Vertex by vertex on the regular 20 x 41 mesh, with no interpolation:", "",
+                  markdown_table(["weights", "mirror asymmetry (max)",
+                                  "flipping the diagonals moves the result (RMS)",
+                                  "flipping the diagonals moves the result (max)"],
+                                 [[w, share(m["mirror_asymmetry_max"]), share(m["flip_moves_rms"]),
+                                   share(m["flip_moves_max"])] for w, m in vert.items()]), ""]
     if "point_handle" in metrics:
         rows = [[name, m["handle_vertices"], m["iterations"], fmt(m["energy_final"]),
                  fmt(m["edge_error_final"]["rms_relative"]),
@@ -812,6 +1051,21 @@ def write_summary(metrics, path):
                   markdown_table(["handle", "handle vertices", "iterations", "energy",
                                   "edge error", "end rotation (degrees)", "volume change"],
                                  rows), ""]
+    if "stability" in metrics:
+        rows = [[name, fmt(m["energy"], 5), fmt(m["energy_after_nudge"], 5),
+                 f"{100 * m['energy_change']:+.3f}%", fmt(m["moved_over_diagonal"], 2),
+                 m["iterations_after_nudge"], fmt(m["converged_after_nudge"])]
+                for name, m in metrics["stability"].items()]
+        parts += ["## Is the result a minimum? (nudge and solve again)", "",
+                  "Every free vertex of the result is moved at random by up to 0.1% of the "
+                  "diagonal, then the solve is repeated with a tight stopping rule "
+                  f"(energy decrease below {NUDGE_RULE['energy_tol']:g} of the start, step "
+                  f"below {NUDGE_RULE['step_tol']:g} of the diagonal, at most "
+                  f"{NUDGE_RULE['max_iterations']} iterations). From a minimum the energy comes "
+                  "back to the same value; a clearly lower energy means the result was a "
+                  "balanced state that is not a minimum.", "",
+                  markdown_table(["result", "energy", "energy after nudge", "change",
+                                  "largest move / diagonal", "iterations", "converged"], rows), ""]
     with open(path, "w") as f:
         f.write("\n".join(parts))
 
@@ -826,6 +1080,7 @@ EXPERIMENTS.update({
     "large_rotations": large_rotations,
     "point_handle": point_handle,
     "triangulation": triangulation,
+    "stability": stability,
 })
 
 DOC_FIGURES = [
@@ -871,6 +1126,9 @@ def main(argv=None):
                         help="copy the key figures and the summary into docs/")
     args = parser.parse_args(argv)
     names = args.only or list(EXPERIMENTS)
+    if args.update_docs and set(names) != set(EXPERIMENTS):
+        parser.error("--update-docs copies every table and figure into docs/, so it needs "
+                     "a full run: leave out --only")
     os.makedirs(args.out, exist_ok=True)
     metrics_path = os.path.join(args.out, "metrics.json")
     metrics = {}

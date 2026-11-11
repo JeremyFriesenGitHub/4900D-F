@@ -23,6 +23,33 @@ def test_twist_angle_follows_twists_past_180_degrees():
         assert np.isclose(X.twist_angle(V, twisted(V, degrees)), degrees, atol=1e-6)
 
 
+def test_twist_angle_on_a_jittered_bar():
+    V, F = S.irregular_bar(jitter=0.02)
+    assert [set(r) for r in X.side_rings(V)] == [set(r) for r in X.side_rings(S.bar()[0])]
+    for degrees in (90.0, 250.0):
+        assert np.isclose(X.twist_angle(V, twisted(V, degrees)), degrees, atol=1e-6)
+
+
+def test_twist_is_undefined_below_the_coherence_threshold():
+    V, F = S.bar()
+    ring = X.side_rings(V)[20]
+    for turn, defined in ((110.0, True), (130.0, False)):
+        # Every other vertex turned: the mean direction has length cos(turn / 2).
+        X_ = V.copy()
+        X_[ring[::2]] = V[ring[::2]] @ sel.rotation("z", turn).T
+        assert np.isnan(X.twist_angle(V, X_)) != defined
+
+
+def test_twist_is_undefined_across_a_jump_of_more_than_90_degrees():
+    V, F = S.bar()
+    X_ = V.copy()
+    ring = X.side_rings(V)[20]
+    X_[ring] = V[ring] @ sel.rotation("z", 80.0).T
+    assert np.isclose(X.twist_angle(V, X_), 0.0)
+    X_[ring] = V[ring] @ sel.rotation("z", 120.0).T
+    assert np.isnan(X.twist_angle(V, X_))
+
+
 def test_twist_is_undefined_where_a_ring_folds_onto_itself():
     V, F = S.bar()
     X_ = twisted(V, 90.0)
@@ -119,6 +146,73 @@ def test_irregular_bar_has_no_folded_triangles():
     # default jitter stays below it.
     W, G = S.irregular_bar(rings=41, sides=20, jitter=0.4)
     assert outward_side_faces(W, G) < 1.0
+
+
+def test_bend_targets_turn_the_end_towards_minus_y():
+    V, F = S.bar()
+    everything = np.arange(V.shape[0])
+    rings = X.side_rings(V)
+    for angle in (30.0, 90.0, 200.0):
+        T = S.bend_targets(V, everything, angle)
+        axis = T[rings[-1]].mean(axis=0) - T[rings[0]].mean(axis=0)
+        theta = np.radians(angle)
+        assert np.allclose(axis / np.linalg.norm(axis), [0.0, -np.sin(theta), np.cos(theta)])
+
+
+def test_bar_ends_take_whole_rings():
+    for rings in (25, 41, 61, 81, 121, 161, 241):
+        V, F = S.bar(rings=rings, sides=12)
+        fixed, handles = S.bar_ends(V)
+        z = V[:, 2]
+        # Thresholds keep clear of every ring, so jitter cannot split one.
+        spacing = 1.0 / (rings - 1)
+        for k in range(rings):
+            level = -0.5 + k * spacing
+            assert min(abs(level - (-0.5 + 0.049)), abs(level - (-0.5 + 0.951))) > 0.02 * spacing
+        assert fixed.size == handles.size
+        assert np.isclose(z[fixed].max() + z[handles].min(), 0.0)
+    jittered = S.bar_twist()
+    regular = S.bar_twist(jitter=0.0)
+    assert np.array_equal(jittered.fixed, regular.fixed)
+    assert np.array_equal(jittered.handles, regular.handles)
+    assert not np.array_equal(jittered.vertices, regular.vertices)
+
+
+def test_flip_diagonals():
+    from arap import laplacian as lap
+    from arap.metrics import is_closed, signed_volume, unique_edges
+
+    V, F = S.bar(rings=41, sides=20)
+    G = S.flip_diagonals(V, F)
+    assert is_closed(G) and np.isclose(signed_volume(V, G), signed_volume(V, F))
+    old, new = set(map(tuple, unique_edges(F))), set(map(tuple, unique_edges(G)))
+    assert len(old - new) == len(new - old) == 20 * 40
+    # The diagonal of a rectangle is opposite two right angles, so its
+    # cotangent weight is zero and the flip leaves the cotangent Laplacian as
+    # it is; the uniform Laplacian changes.
+    assert abs(lap.mesh_laplacian(V, F)[0] - lap.mesh_laplacian(V, G)[0]).max() < 1e-12
+    assert abs(lap.mesh_laplacian(V, F, "uniform")[0] - lap.mesh_laplacian(V, G, "uniform")[0]).max() == 1.0
+
+
+def test_centre_line_kink():
+    V, F = S.bar(rings=41, sides=20)
+    z0 = V[:, 2].min()
+    radius = 2.0 / np.pi  # a quarter circle as long as the bar
+
+    def bent(arc_length):
+        """The bar bent into a quarter circle; each height h goes to arc length arc_length(h)."""
+        a = arc_length(V[:, 2] - z0) / radius
+        out = V.copy()
+        out[:, 1] = -radius * (1 - np.cos(a)) + V[:, 1] * np.cos(a)
+        out[:, 2] = z0 + radius * np.sin(a) + V[:, 1] * np.sin(a)
+        return out
+
+    assert np.isclose(X.centre_line_kink(V, bent(lambda h: h)), 1.0, atol=1e-6)
+    # The same arc, but most of the turn is crowded towards the top end.
+    assert X.centre_line_kink(V, bent(lambda h: h ** 3)) > 2.5
+    assert X.centre_line_kink(V, V + 1.0) == 1.0
+    W, _ = S.irregular_bar()
+    assert X.centre_line_kink(W, W) is None
 
 
 def test_bend_targets_put_the_end_on_the_arc():

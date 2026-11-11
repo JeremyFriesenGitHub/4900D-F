@@ -60,3 +60,19 @@ def test_full_arap_with_geomproc_operator(setup):
     sparse = d.deform(t, max_iterations=5, energy_tol=0.0, step_tol=0.0)
     assert sparse.iterations == 5
     assert np.abs(sparse.vertices - X).max() < 1e-10
+
+
+def test_area_weighted_operator_with_consistent_rhs(setup):
+    # The handout: if the Voronoi area weights a row of L, it must also
+    # weight that row of b. Delta = M^-1 (W - D) with mixed areas M.
+    from arap import laplacian as lap
+
+    V, F, c, t, _, _ = setup
+    d = ARAPDeformer(V, F, c)  # default clamp="zero"
+    M_inv = 1.0 / lap.mixed_areas(V, F)
+    L_area = -(M_inv[:, None] * d.L.toarray())
+    R = d.local_step(d.initial_guess(t))
+    dense = reference.arap_global_step(L_area, V, R, c, t)
+    assert np.abs(dense - d.global_step(R, t)).max() < 1e-10
+    wrong = reference.row_replaced_solve(L_area, -d.rhs(R), c, t)
+    assert np.abs(wrong - dense).max() > 1e-2 * d.diagonal

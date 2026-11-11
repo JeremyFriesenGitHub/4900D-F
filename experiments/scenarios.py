@@ -36,12 +36,12 @@ class Scenario:
         return sel.combine(self.vertices, self.fixed, self.handles, self.handle_targets)
 
 
-def bar(rings=41, sides=20, radius=0.1):
-    """Closed cylinder along z with the given radius and length 1."""
-    return from_geomproc(geomproc.create_cylinder(radius, 1.0, sides, rings, closed=True))
+def bar(rings=41, sides=20, radius=0.1, length=1.0):
+    """Closed cylinder along z, centred at the origin, with the given radius and length."""
+    return from_geomproc(geomproc.create_cylinder(radius, length, sides, rings, closed=True))
 
 
-def irregular_bar(rings=41, sides=20, radius=0.1, jitter=0.2, seed=0):
+def irregular_bar(rings=41, sides=20, radius=0.1, jitter=0.2, seed=0, length=1.0):
     """The bar with its side vertices moved randomly along the surface.
 
     Side vertices between the end rings move by up to ``jitter`` times the
@@ -50,7 +50,7 @@ def irregular_bar(rings=41, sides=20, radius=0.1, jitter=0.2, seed=0):
     and the caps are left as they are. Below a jitter of 0.25 no side
     triangle can fold over; above it some do.
     """
-    V, F = bar(rings, sides, radius)
+    V, F = bar(rings, sides, radius, length)
     rng = np.random.default_rng(seed)
     z0, z1 = V[:, 2].min(), V[:, 2].max()
     r = np.hypot(V[:, 0], V[:, 1])

@@ -621,6 +621,41 @@ def large_rotations(out):
     return rows
 
 
+def long_twist(out):
+    """The stepped twist on a bar three times as long, to 270 degrees.
+
+    Same radius, ring spacing, jitter and end slabs (two rings and the cap)
+    as the default twist bar; only the length differs. Uses
+    ``LARGE_ROTATION_RULE``, like the large rotations.
+    """
+    length, step = 3.0, 10
+    V, F = S.irregular_bar(rings=121, sides=20, jitter=0.02, length=length)
+    z = V[:, 2]
+    fixed = np.flatnonzero(z < z.min() + 0.049)
+    handles = np.flatnonzero(z > z.max() - 0.049)
+    targets_at = lambda a: sel.combine(V, fixed, handles, sel.rigid_targets(
+        V[handles], sel.rotation("z", a), pivot=np.zeros(3)))[1]
+    c, _ = sel.combine(V, fixed, handles, V[handles])
+    d = ARAPDeformer(V, F, c)
+    colors = constraint_colors(V.shape[0], fixed, handles)
+    free = np.setdiff1d(np.arange(V.shape[0]), c)
+    colors[free] = stripe_colors(V)[free]
+    trace, panels, previous = [], [], 0
+    for a, r, total in stepped(d, targets_at, range(step, 271, step), **LARGE_ROTATION_RULE):
+        trace.append((a, twist_angle(V, r.vertices), narrowest_ring(V, r.vertices),
+                      self_intersections(r.vertices, F), r.energies[-1], total - previous,
+                      r.converged))
+        previous = total
+        if a in (90, 180, 270):
+            panels.append(dict(vertices=r.vertices, faces=F, colors=colors, title=f"{a} degrees"))
+    render_panels(panels, os.path.join(out, "long_twist", "steps.png"), view=(15, -60),
+                  title=f"bar of length {length:g} twisted in {step}-degree steps")
+    keys = ("handle", "reached", "narrowest_ring", "self_intersections", "energy",
+            "iterations", "converged")
+    return {"vertices": int(V.shape[0]), "constrained": int(c.size),
+            **{k: [to_builtin(row[i]) for row in trace] for i, k in enumerate(keys)}}
+
+
 def centre_line_kink(rest, deformed):
     """Sharpest turn of a bar's centre line divided by its mean turn.
 
@@ -1001,6 +1036,17 @@ def write_summary(metrics, path):
             parts += ["Twist in 10-degree steps, after each step:", "",
                       markdown_table(["handle rotation", "twist reached", "narrowest",
                                       "crossings", "energy", "iterations", "converged"], rows), ""]
+    if "long_twist" in metrics:
+        lt = metrics["long_twist"]
+        rows = [[fmt(int(a)), twist_cell({"t": t}, "t"), fmt(n, 2), k, fmt(e), i, fmt(ok)]
+                for a, t, n, k, e, i, ok in zip(
+                    lt["handle"], lt["reached"], lt["narrowest_ring"], lt["self_intersections"],
+                    lt["energy"], lt["iterations"], lt["converged"]) if int(a) % 30 == 0]
+        parts += ["Twist in 10-degree steps on a bar three times as long (same radius, ring "
+                  f"spacing and end slabs; {lt['vertices']} vertices, {lt['constrained']} "
+                  "constrained), every third step:", "",
+                  markdown_table(["handle rotation", "twist reached", "narrowest",
+                                  "crossings", "energy", "iterations", "converged"], rows), ""]
     if "triangulation" in metrics:
         tri = metrics["triangulation"]["meshes"]
         share = lambda x: f"{100 * x:.2f}%"
@@ -1080,6 +1126,7 @@ EXPERIMENTS.update({
     "large_rotations": large_rotations,
     "point_handle": point_handle,
     "triangulation": triangulation,
+    "long_twist": long_twist,
     "stability": stability,
 })
 
@@ -1100,6 +1147,7 @@ DOC_FIGURES = [
     "large_rotations/twist_270.png",
     "large_rotations/twist_steps.png",
     "large_rotations/twist_narrowest.png",
+    "long_twist/steps.png",
     "triangulation/cotangent.png",
     "triangulation/uniform.png",
     "point_handle/bar.png",

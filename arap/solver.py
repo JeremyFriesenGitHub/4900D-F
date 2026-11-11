@@ -189,8 +189,10 @@ class ARAPDeformer:
             fraction of the initial energy ...
         step_tol : float
             ... and the largest vertex move is below ``step_tol`` times the
-            bounding-box diagonal. Convergence is linear, so the remaining
-            error can be several times larger than the last step.
+            bounding-box diagonal. Convergence is linear and can be slow, so
+            the remaining distance to the minimum can be tens to hundreds of
+            times larger than the last step. The rule also cannot tell a
+            minimum from a balanced state that is not one (a saddle).
         snapshot_iterations : iterable of int
             Iterations whose positions are stored in ``result.snapshots``
             (0 is the initial guess).

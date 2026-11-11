@@ -36,34 +36,67 @@ class Scenario:
         return sel.combine(self.vertices, self.fixed, self.handles, self.handle_targets)
 
 
-def bar(rings=41, sides=20):
-    """Closed cylinder along z with radius 0.1 and length 1."""
-    return from_geomproc(geomproc.create_cylinder(0.1, 1.0, sides, rings, closed=True))
+def bar(rings=41, sides=20, radius=0.1):
+    """Closed cylinder along z with the given radius and length 1."""
+    return from_geomproc(geomproc.create_cylinder(radius, 1.0, sides, rings, closed=True))
 
 
-def bar_bend(angle=90.0, rings=41, sides=20):
-    """Bottom of the bar fixed, top turned by ``angle`` and placed on an arc.
+def irregular_bar(rings=41, sides=20, radius=0.1, jitter=0.2, seed=0):
+    """The bar with its side vertices moved randomly along the surface.
 
-    The handle is moved to where it would be if the bar were bent into a
-    circular arc of the same length, so a perfect isometric bend exists.
+    Side vertices between the end rings move by up to ``jitter`` times the
+    spacing in angle and in height and are put back on the cylinder, so the
+    shape stays a cylinder but the triangles become irregular. The end rings
+    and the caps are left as they are. Below a jitter of 0.25 no side
+    triangle can fold over; above it some do.
     """
-    V, F = bar(rings, sides)
-    fixed = sel.by_coordinate(V, "z", below=0.05)
-    handles = sel.by_coordinate(V, "z", above=0.95)
+    V, F = bar(rings, sides, radius)
+    rng = np.random.default_rng(seed)
+    z0, z1 = V[:, 2].min(), V[:, 2].max()
+    r = np.hypot(V[:, 0], V[:, 1])
+    side = np.flatnonzero((r > 0.5 * radius) & (V[:, 2] > z0 + 1e-9) & (V[:, 2] < z1 - 1e-9))
+    angle = np.arctan2(V[side, 1], V[side, 0]) + jitter * (2 * np.pi / sides) * rng.uniform(-1, 1, side.size)
+    V = V.copy()
+    V[side, 0] = radius * np.cos(angle)
+    V[side, 1] = radius * np.sin(angle)
+    V[side, 2] += jitter * (z1 - z0) / (rings - 1) * rng.uniform(-1, 1, side.size)
+    return V, F
+
+
+def bend_targets(vertices, handles, angle):
+    """Handle positions for bending a bar along z into a circular arc.
+
+    The handle is turned by ``angle`` about x and moved to the end of an arc
+    of the bar's length, so the bar's centre line can keep its length.
+    """
+    V = np.asarray(vertices)
     z0, z1 = V[:, 2].min(), V[:, 2].max()
     theta = np.radians(angle)
     radius = (z1 - z0) / theta
     top = np.array([0.0, 0.0, z1])
     end = np.array([0.0, -radius * (1.0 - np.cos(theta)), z0 + radius * np.sin(theta)])
-    targets = sel.rigid_targets(V[handles], sel.rotation("x", angle), pivot=top,
-                                translation=end - top)
+    return sel.rigid_targets(V[handles], sel.rotation("x", angle), pivot=top,
+                             translation=end - top)
+
+
+def bar_bend(angle=90.0, rings=41, sides=20, radius=0.1):
+    """Bottom of the bar fixed, top turned by ``angle`` and placed on an arc.
+
+    The handle is moved to where it would be if the bar were bent into a
+    circular arc of the same length, so the bar's centre line can keep its
+    length.
+    """
+    V, F = bar(rings, sides, radius)
+    fixed = sel.by_coordinate(V, "z", below=0.05)
+    handles = sel.by_coordinate(V, "z", above=0.95)
+    targets = bend_targets(V, handles, angle)
     return Scenario("bar_bend", V, F, fixed, handles, targets, view=(10, 0),
                     description=f"bar bent by {angle:g} degrees")
 
 
-def bar_twist(angle=135.0, rings=41, sides=20):
+def bar_twist(angle=135.0, rings=41, sides=20, radius=0.1):
     """Bottom of the bar fixed, top rotated about the bar's own axis."""
-    V, F = bar(rings, sides)
+    V, F = bar(rings, sides, radius)
     fixed = sel.by_coordinate(V, "z", below=0.05)
     handles = sel.by_coordinate(V, "z", above=0.95)
     targets = sel.rigid_targets(V[handles], sel.rotation("z", angle), pivot=np.zeros(3))

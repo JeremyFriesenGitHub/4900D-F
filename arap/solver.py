@@ -185,11 +185,12 @@ class ARAPDeformer:
             Initial guess method (see ``initial_guess``) or explicit positions.
         max_iterations : int
         energy_tol : float
-            Stop when the relative energy decrease of an iteration is below
-            this value ...
+            Stop when the energy decrease of an iteration is below this
+            fraction of the initial energy ...
         step_tol : float
             ... and the largest vertex move is below ``step_tol`` times the
-            bounding-box diagonal.
+            bounding-box diagonal. Convergence is linear, so the remaining
+            error can be several times larger than the last step.
         snapshot_iterations : iterable of int
             Iterations whose positions are stored in ``result.snapshots``
             (0 is the initial guess).
@@ -227,7 +228,10 @@ class ARAPDeformer:
             local_time += time.perf_counter() - t
             new_energy = self.energy(updated, rotations)
             step = float(np.max(np.linalg.norm(updated - current, axis=1)))
-            decrease = (energy - new_energy) / max(abs(energy), 1e-300)
+            # Measured against the initial energy: relative to the current
+            # energy the decrease stays roughly constant when the minimum is
+            # zero (a reachable rigid motion), and the test would never pass.
+            decrease = (energy - new_energy) / max(abs(energies[0]), 1e-300)
             current, energy = updated, new_energy
             energies.append(energy)
             if iterations in wanted:

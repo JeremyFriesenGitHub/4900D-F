@@ -186,6 +186,19 @@ def test_duplicate_constraints_are_rejected(bar):
         ARAPDeformer(V, F, [0, 1, 1])
 
 
+def test_stops_when_a_rigid_motion_is_reachable(bar):
+    # The minimum energy is zero here; the stopping rule must still fire.
+    V, F = bar
+    c, _, _, _ = bar_bend(V)
+    Q = selection.rotation("z", 30.0) @ selection.rotation("x", 20.0)
+    moved = V @ Q.T + np.array([0.1, 0.2, -0.1])
+    d = ARAPDeformer(V, F, c)
+    result = d.deform(moved[c])
+    assert result.converged
+    assert result.iterations < 500
+    assert np.abs(result.vertices - moved).max() < 1e-3 * d.diagonal
+
+
 def test_unreferenced_vertex_is_reported(cube):
     V, F = cube
     V2 = np.vstack([V, [5.0, 5.0, 5.0]])

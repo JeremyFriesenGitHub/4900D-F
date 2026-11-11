@@ -62,6 +62,22 @@ def optional_igl():
     return igl
 
 
+def median_time(fn, repeats=5, warmup=True):
+    """Median wall-clock time of ``fn()`` over ``repeats`` calls.
+
+    One untimed call first lets BLAS threads and caches settle; a single
+    sample on a shared machine can be off by two orders of magnitude.
+    """
+    if warmup:
+        fn()
+    samples = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        fn()
+        samples.append(time.perf_counter() - start)
+    return float(np.median(samples))
+
+
 def summarize(result, rest, faces):
     E = np.asarray(result.energies)
     return {
@@ -101,8 +117,11 @@ def showcase(out, scenario_name):
     d = ARAPDeformer(V, F, c)
     snaps = (0, 1, 2, 4, 10) if scenario_name == "bar_bend" else ()
     result = d.deform(t, max_iterations=MAX_ITERATIONS, snapshot_iterations=snaps)
-    colors = stripe_colors(V) if scenario_name == "bar_twist" else \
-        constraint_colors(V.shape[0], sc.fixed, sc.handles)
+    colors = constraint_colors(V.shape[0], sc.fixed, sc.handles)
+    if scenario_name == "bar_twist":
+        # Stripes make the twist visible; constrained vertices keep their colour.
+        free = np.setdiff1d(np.arange(V.shape[0]), c)
+        colors[free] = stripe_colors(V)[free]
     folder = os.path.join(out, scenario_name)
     render_panels(
         [dict(vertices=V, faces=F, colors=colors, title="rest pose"),
@@ -137,8 +156,10 @@ def showcase(out, scenario_name):
                    setup=d.timings, description=sc.description)
     if scenario_name == "hinge":
         # The top block should end up as a rigid copy of itself.
+        # Faces of the top block, without those inside the handle (which the
+        # constraints move rigidly for both methods).
         top = np.flatnonzero(V[:, 2] > 0.45)
-        keep = np.all(np.isin(F, top), axis=1)
+        keep = np.all(np.isin(F, top), axis=1) & ~np.all(np.isin(F, sc.handles), axis=1)
         metrics["top_block_edge_error"] = {
             "laplacian": edge_length_error(V, result.initial_guess, F[keep]),
             "arap": edge_length_error(V, result.vertices, F[keep]),
@@ -228,7 +249,10 @@ def initial_guess(out):
 
 
 def scaling(out):
-    """Time per iteration against mesh size, sparse factorised vs dense solves."""
+    """Time per iteration against mesh size, sparse factorised vs dense solves.
+
+    Timings are medians of repeated runs; run on an otherwise idle machine.
+    """
     sizes = [(12, 25), (20, 41), (32, 81), (48, 121), (64, 161), (96, 241)]
     dense_limit = 6000
     rows = []
@@ -237,24 +261,27 @@ def scaling(out):
         V, F = sc.vertices, sc.faces
         c, t = sc.constraints
         n = V.shape[0]
-        d = ARAPDeformer(V, F, c)
-        r = d.deform(t, max_iterations=20, energy_tol=0.0, step_tol=0.0)
-        row = {
-            "vertices": int(n),
-            "weights_seconds": d.timings["weights"],
-            "factorization_seconds": d.timings["factorization"],
-            "local_step_seconds": r.timings["local_steps"] / r.iterations,
-            "global_step_seconds": r.timings["global_steps"] / r.iterations,
-            "iteration_seconds": r.timings["per_iteration"],
-        }
+        # Three repeats of setup and of a 20-iteration run; keep the medians.
+        runs = []
+        for _ in range(3):
+            d = ARAPDeformer(V, F, c)
+            r = d.deform(t, max_iterations=20, energy_tol=0.0, step_tol=0.0)
+            runs.append({
+                "weights_seconds": d.timings["weights"],
+                "factorization_seconds": d.timings["factorization"],
+                "local_step_seconds": r.timings["local_steps"] / r.iterations,
+                "global_step_seconds": r.timings["global_steps"] / r.iterations,
+                "iteration_seconds": r.timings["per_iteration"],
+            })
+        row = {"vertices": int(n)}
+        row.update({k: float(np.median([run[k] for run in runs])) for k in runs[0]})
         if n <= dense_limit:
-            start = time.perf_counter()
+            row["geomproc_laplacian_seconds"] = median_time(
+                lambda: reference.geomproc_laplacian(V, F), repeats=3, warmup=False)
             L_gp = reference.geomproc_laplacian(V, F)
-            row["geomproc_laplacian_seconds"] = time.perf_counter() - start
             R = r.rotations
-            start = time.perf_counter()
-            reference.arap_global_step(L_gp, V, R, c, t)
-            row["dense_global_step_seconds"] = time.perf_counter() - start
+            row["dense_global_step_seconds"] = median_time(
+                lambda: reference.arap_global_step(L_gp, V, R, c, t))
         rows.append(row)
     n = [row["vertices"] for row in rows]
     nd = [row["vertices"] for row in rows if "dense_global_step_seconds" in row]
@@ -271,9 +298,19 @@ def scaling(out):
 
 
 def geomproc_consistency(out):
-    """The sparse operator against GeomProc's dense row-normalised operator."""
+    """The sparse solver against dense solves with row-scaled operators.
+
+    GeomProc's ``geometric_laplacian`` is ``D^-1 W - I``; the area-weighted
+    operator is ``M^-1 (W - D)`` with mixed areas. Each is paired with a
+    right-hand side scaled the same way (consistent) and with the paper's
+    unscaled one (inconsistent).
+    """
     rows = {}
     igl = optional_igl()
+
+    def dist(a, b):
+        return float(np.max(np.linalg.norm(a - b, axis=1)) / diag)
+
     for name in ("bar_bend", "bunny_ears"):
         sc = S.ALL[name]()
         V, F = sc.vertices, sc.faces
@@ -292,11 +329,20 @@ def geomproc_consistency(out):
             Rk = d.local_step(X)
         sparse10 = d.deform(t, max_iterations=10, energy_tol=0.0, step_tol=0.0).vertices
         row = {
-            "membrane": float(np.abs(dense_membrane - guess).max() / diag),
-            "one_step_consistent_rhs": float(np.abs(dense_step - d.global_step(R, t)).max() / diag),
-            "ten_iterations": float(np.abs(X - sparse10).max() / diag),
-            "one_step_inconsistent_rhs": float(np.abs(wrong_step - d.global_step(R, t)).max() / diag),
+            "membrane": dist(dense_membrane, guess),
+            "one_step_consistent_rhs": dist(dense_step, d.global_step(R, t)),
+            "ten_iterations": dist(X, sparse10),
+            "one_step_inconsistent_rhs": dist(wrong_step, d.global_step(R, t)),
         }
+        # Area-weighted operator with the default (clamped) weights.
+        dz = ARAPDeformer(V, F, c)
+        Rz = dz.local_step(dz.initial_guess(t))
+        L_area = -(1.0 / lap.mixed_areas(V, F))[:, None] * dz.L.toarray()
+        expected = dz.global_step(Rz, t)
+        row["area_weighted_consistent_rhs"] = dist(
+            reference.arap_global_step(L_area, V, Rz, c, t), expected)
+        row["area_weighted_inconsistent_rhs"] = dist(
+            reference.row_replaced_solve(L_area, -dz.rhs(Rz), c, t), expected)
         if igl is not None:
             raw = ARAPDeformer(V, F, c, clamp="none")
             g = raw.initial_guess(t)
@@ -306,7 +352,7 @@ def geomproc_consistency(out):
             data.max_iter = 10
             igl.arap_precomputation(V, F, 3, c.astype(np.int32), data)
             theirs = igl.arap_solve(t, data, g.copy())
-            row["libigl_ten_iterations_raw_weights"] = float(np.abs(ours - theirs).max() / diag)
+            row["libigl_ten_iterations_raw_weights"] = dist(ours, theirs)
         rows[name] = row
     return rows
 
@@ -314,7 +360,7 @@ def geomproc_consistency(out):
 # ----------------------------------------------------------------- report
 def write_summary(metrics, path):
     parts = ["# Experiment summary", "",
-             "Generated by `python -m experiments.run_all`. Edge error is the RMS of the "
+             "Produced by `python -m experiments.run_all`. Edge error is the RMS of the "
              "relative edge-length change; distances are divided by the bounding-box diagonal. "
              "\"Iterations to within 1%\" counts the iterations until the energy is within 1% "
              "of its final value.", ""]
@@ -369,18 +415,28 @@ def write_summary(metrics, path):
                  fmt(1000 * r["dense_global_step_seconds"]) if "dense_global_step_seconds" in r else "-",
                  fmt(r["geomproc_laplacian_seconds"]) if "geomproc_laplacian_seconds" in r else "-"]
                 for r in metrics["scaling"]]
-        parts += ["## Timing (bar bend, 20 iterations)", "", markdown_table(
+        parts += ["## Timing (bar bend, 20 iterations)", "",
+                  "Medians of repeated runs. The dense global step is one row-replaced "
+                  "`numpy.linalg.solve` with GeomProc's matrix, as in the class demos.", "",
+                  markdown_table(
             ["vertices", "setup (s)", "local step (ms)", "global step (ms)",
              "dense global step (ms)", "GeomProc Laplacian build (s)"], rows), ""]
     if "geomproc_consistency" in metrics:
-        rows = [[name] + [fmt(m.get(k, float("nan")), 2) for k in (
-            "membrane", "one_step_consistent_rhs", "ten_iterations", "one_step_inconsistent_rhs",
-            "libigl_ten_iterations_raw_weights")]
-            for name, m in metrics["geomproc_consistency"].items()]
+        keys = ("membrane", "one_step_consistent_rhs", "ten_iterations",
+                "one_step_inconsistent_rhs", "area_weighted_consistent_rhs",
+                "area_weighted_inconsistent_rhs", "libigl_ten_iterations_raw_weights")
+        rows = [[name] + [fmt(m[k], 2) if k in m else "-" for k in keys]
+                for name, m in metrics["geomproc_consistency"].items()]
         parts += ["## Agreement with GeomProc's operator and with libigl", "",
-                  "Largest vertex difference divided by the bounding-box diagonal.", "",
-                  markdown_table(["scenario", "membrane", "one ARAP step", "ten ARAP iterations",
-                                  "one step, inconsistent b", "libigl, ten iterations"], rows), ""]
+                  "Largest distance between corresponding vertices, divided by the "
+                  "bounding-box diagonal. The libigl column is empty when libigl is not "
+                  "installed.", "",
+                  markdown_table(["scenario", "membrane, GeomProc operator",
+                                  "one ARAP step, GeomProc operator", "ten ARAP iterations, GeomProc operator",
+                                  "one step, GeomProc operator, inconsistent b",
+                                  "one step, area-weighted, consistent b",
+                                  "one step, area-weighted, inconsistent b",
+                                  "libigl, ten iterations"], rows), ""]
     with open(path, "w") as f:
         f.write("\n".join(parts))
 

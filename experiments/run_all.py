@@ -806,9 +806,11 @@ def stability(out):
 
     The stopping rule cannot tell a minimum from a balanced state that is not
     one (a saddle), and a perfectly symmetric start can stay on such a state.
-    Each free vertex is moved at random by up to 0.1% of the diagonal and the
-    solve is repeated with a much tighter rule (``NUDGE_RULE``). From a
-    minimum the energy returns to the same value; from a saddle it ends lower.
+    Each result is continued in two ways with a much tighter rule
+    (``NUDGE_RULE``): as it is, and after every free vertex is moved at
+    random by up to 0.1% of the diagonal. A result that had simply not
+    finished converging ends at the same energy both ways; from a saddle the
+    nudged run ends lower than the run that was only continued.
     """
     rng = np.random.default_rng(3)
     rule = LARGE_ROTATION_RULE
@@ -880,13 +882,17 @@ def stability(out):
         noise = rng.uniform(-1.0, 1.0, X.shape)
         noise *= 1e-3 * d.diagonal / np.linalg.norm(noise, axis=1).max()
         noise[d.constrained] = 0.0
+        plain = d.deform(t, init=X, **NUDGE_RULE)
         again = d.deform(t, init=X + noise, **NUDGE_RULE)
         rows[name] = {
             "energy": r.energies[-1],
+            "energy_continued": plain.energies[-1],
             "energy_after_nudge": again.energies[-1],
-            "energy_change": again.energies[-1] / r.energies[-1] - 1.0,
-            "moved_over_diagonal": float(np.max(np.linalg.norm(again.vertices - X, axis=1))
-                                         / d.diagonal),
+            "nudge_against_continued": again.energies[-1] / plain.energies[-1] - 1.0,
+            "moved_over_diagonal": float(
+                np.max(np.linalg.norm(again.vertices - plain.vertices, axis=1)) / d.diagonal),
+            "iterations_continued": plain.iterations,
+            "converged_continued": plain.converged,
             "iterations_after_nudge": again.iterations,
             "converged_after_nudge": again.converged,
         }
@@ -1098,20 +1104,28 @@ def write_summary(metrics, path):
                                   "edge error", "end rotation (degrees)", "volume change"],
                                  rows), ""]
     if "stability" in metrics:
-        rows = [[name, fmt(m["energy"], 5), fmt(m["energy_after_nudge"], 5),
-                 f"{100 * m['energy_change']:+.3f}%", fmt(m["moved_over_diagonal"], 2),
-                 m["iterations_after_nudge"], fmt(m["converged_after_nudge"])]
+        rows = [[name, fmt(m["energy"], 5), fmt(m["energy_continued"], 5),
+                 fmt(m["energy_after_nudge"], 5),
+                 f"{100 * m['nudge_against_continued']:+.3f}%",
+                 f"{100 * m['moved_over_diagonal']:.2f}%",
+                 f"{m['iterations_continued']} / {m['iterations_after_nudge']}",
+                 f"{fmt(m['converged_continued'])} / {fmt(m['converged_after_nudge'])}"]
                 for name, m in metrics["stability"].items()]
         parts += ["## Is the result a minimum? (nudge and solve again)", "",
-                  "Every free vertex of the result is moved at random by up to 0.1% of the "
-                  "diagonal, then the solve is repeated with a tight stopping rule "
-                  f"(energy decrease below {NUDGE_RULE['energy_tol']:g} of the start, step "
-                  f"below {NUDGE_RULE['step_tol']:g} of the diagonal, at most "
-                  f"{NUDGE_RULE['max_iterations']} iterations). From a minimum the energy comes "
-                  "back to the same value; a clearly lower energy means the result was a "
-                  "balanced state that is not a minimum.", "",
-                  markdown_table(["result", "energy", "energy after nudge", "change",
-                                  "largest move / diagonal", "iterations", "converged"], rows), ""]
+                  "Each result is continued twice with a tight stopping rule (energy decrease "
+                  f"below {NUDGE_RULE['energy_tol']:g} of the start, step below "
+                  f"{NUDGE_RULE['step_tol']:g} of the diagonal, at most "
+                  f"{NUDGE_RULE['max_iterations']} iterations): as it is (\"continued\"), and "
+                  "after every free vertex is moved at random by up to 0.1% of the diagonal "
+                  "(\"nudged\"). \"nudged against continued\" compares the two final energies "
+                  "and \"apart\" is the largest distance between the two final shapes as a share "
+                  "of the diagonal. If the nudged run ends clearly lower, the result was a "
+                  "balanced state that is not a minimum. If both end at the same energy below "
+                  "the result's, the result had only not finished converging.", "",
+                  markdown_table(["result", "energy", "continued", "nudged",
+                                  "nudged against continued", "apart",
+                                  "iterations (continued / nudged)",
+                                  "converged (continued / nudged)"], rows), ""]
     with open(path, "w") as f:
         f.write("\n".join(parts))
 

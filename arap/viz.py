@@ -120,7 +120,8 @@ def plot_lines(x, series, path, xlabel, ylabel, title=None, reference=None):
     if title:
         ax.set_title(title, fontsize=10)
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
+    if len(series) + (reference is not None) > 1:
+        ax.legend(fontsize=8)
     fig.tight_layout()
     _save(fig, path)
 

@@ -113,3 +113,26 @@ def test_bad_clamp_rejected(cube):
     V, F = cube
     with pytest.raises(ValueError):
         lap.cotangent_weights(V, F, clamp="sometimes")
+
+
+def test_mixed_areas_of_an_obtuse_triangle():
+    # The corner at vertex 0 is obtuse: it gets half the area, the others a quarter.
+    V = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [-0.5, 0.2, 0.0]])
+    F = np.array([[0, 1, 2]])
+    A = lap.mixed_areas(V, F)
+    area = lap.face_areas(V, F)[0]
+    assert np.allclose(A, [area / 2.0, area / 4.0, area / 4.0])
+
+
+def test_deformers_clamp_negative_weights_by_default(bunny):
+    from arap.solver import ARAPDeformer
+    from arap.linear import LinearDeformer
+
+    V, F = bunny
+    d = ARAPDeformer(V, F, [0])
+    assert d.clamp == "zero"
+    assert d.W.data.min() >= 0.0
+    assert np.abs(d.W - lap.cotangent_weights(V, F, clamp="zero")).max() == 0.0
+    linear = LinearDeformer(V, F, [0])
+    L_zero, _ = lap.mesh_laplacian(V, F, clamp="zero")
+    assert np.abs(linear.system_matrix - L_zero).max() == 0.0

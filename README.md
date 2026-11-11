@@ -14,7 +14,7 @@ Python 3.10 or newer.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt        # numpy, scipy, matplotlib
-pip install -r requirements-dev.txt    # adds pytest and libigl, only needed for the tests
+pip install -r requirements-dev.txt    # adds pytest, and libigl for the comparisons in the tests and experiments
 ```
 
 GeomProc is not on PyPI, so version 1.9 (commit `894415c` of
@@ -36,7 +36,7 @@ ears = sel.by_coordinate(V, "y", above=0.8)            # handle
 constrained, targets = sel.combine(V, fixed, ears, V[ears] + [-0.45, -0.15, 0.0])
 
 deformer = ARAPDeformer(V, F, constrained)             # factorises L once
-result = deformer.deform(targets)                      # Laplacian initial guess, then iterate
+result = deformer.deform(targets)                      # Laplacian guess, then iterate
 print(result.iterations, result.converged, result.energies[-1])
 save_mesh("output/bunny_arap.obj", result.vertices, F)
 ```
@@ -63,7 +63,7 @@ python -m pytest
 `output/` receives, for every scenario, the rest pose, the Laplacian editing
 result and the ARAP result as OBJ files with the constrained vertices coloured
 (fixed red, handles yellow) for viewing in MeshLab, plus the figures, the
-energy curve, `metrics.json` and `summary.md`. A full run takes about four
+energy curve, `metrics.json` and `summary.md`. A full run takes about five
 minutes.
 
 ## Code layout
@@ -113,12 +113,15 @@ handles and fixed vertices prescribed. With the cotangent operator
 `Δ = -M^{-1} L` the per-vertex area factor cancels, so this is `L p' = L p`:
 naive Laplacian editing, which is also the global step with every `R_i = I`.
 This is the default initial guess, the same one used in the paper's Fig. 3.
-The thin-plate version from the slides, `Δ²d = 0` (solved as `L M^{-1} L d = 0`),
-is available as an alternative.
+The thin-plate version from the slides, `Δ²d = 0` (solved as
+`L M^{-1} L d = 0`), is available as an alternative.
 
-**Stopping rule.** Iterate until the relative energy decrease of an iteration
-is below `1e-6` and no vertex moved more than `1e-5` of the bounding-box
-diagonal, or the iteration limit is reached.
+**Stopping rule.** Iterate until the energy decrease of an iteration is below
+`1e-6` times the energy of the initial guess and no vertex moved more than
+`1e-5` of the bounding-box diagonal, or the iteration limit is reached. The
+decrease is compared with the initial energy, not the current one: when the
+constraints allow a rigid motion the minimum energy is zero, and a decrease
+relative to the current energy then never becomes small.
 
 ## Design decisions
 
@@ -137,21 +140,25 @@ GeomProc's own matrix give the same deformation.
 consistently. Scaling a row of `L` changes the solution unless the same row of
 `b` is scaled by the same factor. With `L_gp` the right-hand side must be
 `b_i = sum_j L_gp[i, j] · 1/2 (R_i + R_j)(p_j - p_i)`, and likewise for an
-area-weighted operator `M^{-1}(W - D)`. Pairing either with the paper's
-unscaled `b` moves vertices by 30 to 60 % of the bounding-box diagonal after a
-single step (consistency table below). The code uses the unscaled symmetric
-`L` with the unscaled `b`, and the tests check both scaled variants.
+area-weighted operator `M^{-1}(W - D)`. After a single step, pairing `L_gp`
+with the paper's unscaled `b` moves vertices by 34 % (bar) to 68 % (bunny) of
+the bounding-box diagonal, and pairing the area-weighted operator with it
+moves them by 11 % to 24 % (consistency table below; the area-weighted error
+also depends on the mesh's scale, since `M^{-1}` scales as one over length
+squared). The code uses the unscaled symmetric `L` with the unscaled `b`, and
+the tests and the experiments check that both scaled variants give the same
+answer when their `b` is scaled to match.
 
 **Negative cotangent weights are clamped to zero.** This is the one deviation
 from the paper. The scanned meshes have many obtuse triangles (12 % of the
 camel's edges have a negative weight). With negative weights the energy can
 become negative and the rest pose is no longer a minimum, so the iterations
-walk away from it even when no handle has moved: after 50 iterations the camel has drifted by 15 % of its
-diagonal (table below). Clamping makes the energy non-negative and the rest
-pose an exact fixed point. GeomProc's operator is also non-negative for the
-same reason (it replaces a negative cotangent by half the triangle area). The
-raw weights are still available with `clamp="none"`, which is what libigl
-uses, and the tests compare that setting against libigl.
+walk away from it even when no handle has moved: after 50 iterations the
+camel has drifted by 15 % of its diagonal (table below). Clamping makes the energy non-negative and the rest
+pose an exact fixed point. GeomProc's operator is also non-negative, because
+its mixed-area treatment replaces a negative cotangent by half the triangle
+area. The raw weights are still available with `clamp="none"`, which is what
+libigl uses, and the tests compare that setting against libigl.
 
 **Elimination instead of row replacement.** The class demos impose
 constraints by replacing rows of the matrix with identity rows. That gives the
@@ -160,26 +167,32 @@ system symmetric positive definite.
 
 ## Results
 
-All numbers come from one run of `python -m experiments.run_all` (about four
-minutes) on a 4-core 2.1 GHz Xeon with Python 3.13, NumPy 2.5 and SciPy 1.18.
+All numbers come from one run of `python -m experiments.run_all` (under six
+minutes) on a shared 4-core 2.1 GHz Xeon virtual machine with Python 3.13,
+NumPy 2.5 and SciPy 1.18. On that machine timings vary by up to about 40 %
+between runs; every other number is the same from run to run.
 The full tables are in [docs/results.md](docs/results.md). Edge error is the
 RMS of the relative edge-length change `(|e'| - |e|) / |e|` over all edges;
-distances are divided by the bounding-box diagonal. Meshes are normalised
-with GeomProc so their longest side spans [-1, 1].
+distances are divided by the bounding-box diagonal. The loaded meshes are
+normalised with GeomProc so their longest side spans [-1, 1]; the synthetic
+bar (GeomProc's `create_cylinder`) has radius 0.1 and length 1. Timings are
+medians of repeated runs, and "ms per iteration" includes the energy and the
+convergence test.
 
 ### Deformations
 
 | scenario | vertices | constrained | iterations | within 1 % of final energy after | edge error, Laplacian editing | edge error, ARAP | ms per iteration |
 |---|---|---|---|---|---|---|---|
-| bar bend, 90° | 822 | 82 | 128 | 31 | 0.191 | 0.065 | 2.7 |
-| bar twist, 135° | 822 | 82 | 162 | 70 | 0.175 | 0.076 | 2.4 |
-| two-part cylinder hinge, 60° | 6 002 | 1 202 | 132 | 108 | 0.669 | 0.011 | 16 |
-| bunny ears | 2 503 | 881 | 155 | 22 | 0.068 | 0.036 | 7.5 |
-| kid raising its arms | 8 441 | 724 | 862 | 90 | 0.201 | 0.041 | 27 |
-| camel lowering its head | 9 770 | 3 381 | 797 | 96 | 0.100 | 0.017 | 31 |
+| bar bend, 90° | 822 | 82 | 128 | 31 | 0.191 | 0.065 | 3.2 |
+| bar twist, 135° | 822 | 82 | 162 | 70 | 0.175 | 0.076 | 3.8 |
+| two-part cylinder hinge, 60° | 6 002 | 1 202 | 132 | 108 | 0.669 | 0.011 | 23 |
+| bunny ears | 2 503 | 881 | 155 | 22 | 0.068 | 0.036 | 10 |
+| kid raising its arms | 8 441 | 724 | 862 | 90 | 0.201 | 0.041 | 38 |
+| camel lowering its head | 9 770 | 3 381 | 797 | 96 | 0.100 | 0.017 | 45 |
 
-Fixed vertices are red and handles yellow. Each row shows the rest pose,
-Laplacian editing (the initial guess) and the converged ARAP result.
+Fixed vertices are red and handles yellow (the twisted bar's other vertices
+are striped so the twist shows). Each row shows the rest pose, Laplacian
+editing (the initial guess) and the converged ARAP result.
 
 ![Twisted bar](docs/figures/bar_twist_comparison.png)
 ![Two-part cylinder used as a hinge](docs/figures/hinge_comparison.png)
@@ -193,8 +206,8 @@ Laplacian editing (the initial guess) and the converged ARAP result.
   stretch into thin strands, and the camel's body sinks while its legs bend.
   ARAP lowers the edge error by a factor of about 2 (bunny) to 60 (hinge).
 - **Rigid parts stay rigid.** In the hinge, the top block should turn as a
-  rigid body around the thin neck. Inside the block the edge error is 0.274
-  for Laplacian editing and 0.0002 for ARAP.
+  rigid body around the thin neck. Inside the block, leaving out the handle
+  itself, the edge error is 0.33 for Laplacian editing and 0.0002 for ARAP.
 - **Some stretch is unavoidable.** A bar of radius 0.1 bent into a quarter
   circle of radius 2/π ≈ 0.64 has to stretch by about 16 % on the outside of
   the bend and compress by as much on the inside, so no deformation that
@@ -213,32 +226,32 @@ little visible change.
 
 | vertices | setup (weights + factorisation) | local step | global step (sparse) | global step (dense, GeomProc operator) | building GeomProc's operator |
 |---|---|---|---|---|---|
-| 822 | 3 ms | 2.2 ms | 0.3 ms | 13 ms | 0.26 s |
-| 2 594 | 7 ms | 6.8 ms | 0.9 ms | 151 ms | 0.84 s |
-| 5 810 | 16 ms | 15 ms | 2.1 ms | 1 100 ms | 1.9 s |
-| 23 138 | 95 ms | 58 ms | 10 ms | not run | not run |
+| 822 | 4 ms | 2.8 ms | 0.4 ms | 13 ms | 0.34 s |
+| 2 594 | 9 ms | 8.1 ms | 1.2 ms | 181 ms | 1.1 s |
+| 5 810 | 19 ms | 18 ms | 2.7 ms | 1 180 ms | 2.5 s |
+| 23 138 | 101 ms | 74 ms | 13 ms | not run | not run |
 
 ![Dense against sparse solves](docs/figures/scaling_dense_vs_sparse.png)
 
 Times are for the bar bend on cylinders of increasing resolution. Each
 iteration is dominated by the local step (the covariances and the batched
-SVD). Because the factorisation is reused, the global step is five to eight
-times cheaper than the local step, and about 500 times cheaper than a dense
+SVD). Because the factorisation is reused, the global step is about six
+times cheaper than the local step, and about 400 times cheaper than a dense
 `numpy.linalg.solve` on GeomProc's matrix at 5 810 vertices. A full ARAP run
-on the 10 000-vertex camel takes about 25 seconds, most of it in the final
+on the 10 000-vertex camel takes about 36 seconds, most of it in the final
 creeping iterations.
 
 ### Negative cotangent weights
 
-| mesh | edges with a negative raw weight | drift after 50 iterations, raw weights | drift, clamped at zero |
-|---|---|---|---|
-| bunny | 7.2 % | 0.072 | 4e-14 |
-| camel | 11.9 % | 0.148 | 1e-13 |
-| kid | 5.2 % | 0.028 | 1e-13 |
+| mesh | edges with a negative raw weight | drift after 50 iterations, raw weights | same with libigl | drift, clamped at zero |
+|---|---|---|---|---|
+| bunny | 7.2 % | 0.072 | 0.072 | 4e-14 |
+| camel | 11.9 % | 0.148 | 0.148 | 1e-13 |
+| kid | 5.2 % | 0.028 | 0.028 | 1e-13 |
 
 No handle is moved in this test, so the rest pose is the correct answer. With
 raw weights the energy becomes negative and the surface drifts away from it.
-libigl, which uses raw weights, drifts in the same way.
+libigl, which uses raw weights, drifts by the same amount.
 
 ![Bunny drifting with raw weights](docs/figures/clamp_bunny_raw_drift.png)
 
@@ -274,27 +287,33 @@ iterations.
 
 ### Agreement with GeomProc and libigl
 
-Largest vertex difference, divided by the bounding-box diagonal.
+Largest distance between corresponding vertices, divided by the bounding-box
+diagonal.
 
-| scenario | membrane solve | one ARAP step | ten ARAP iterations | one step with an inconsistent `b` | libigl, ten iterations |
-|---|---|---|---|---|---|
-| bar bend | 7e-15 | 7e-15 | 2e-14 | 0.31 | 7e-6 |
-| bunny ears | 1e-15 | 1e-15 | 6e-15 | 0.64 | 4e-5 |
+| | bar bend | bunny ears |
+|---|---|---|
+| membrane solve, GeomProc operator | 7e-15 | 1e-15 |
+| one ARAP step, GeomProc operator, consistent `b` | 7e-15 | 2e-15 |
+| ten ARAP iterations, GeomProc operator | 2e-14 | 6e-15 |
+| one step, GeomProc operator, inconsistent `b` | **0.34** | **0.68** |
+| one step, area-weighted operator, consistent `b` | 2e-12 | 5e-13 |
+| one step, area-weighted operator, inconsistent `b` | **0.11** | **0.24** |
+| libigl, ten iterations, raw weights | 9e-6 | 6e-5 |
 
-The first three columns compare the sparse solver (with `clamp="geomproc"`)
+The GeomProc rows compare the sparse solver (with `clamp="geomproc"`)
 against dense solves on GeomProc's own `geometric_laplacian` with rows
-replaced for the constraints, as in the class demos. The fourth pairs
-GeomProc's row-normalised matrix with the paper's unscaled right-hand side,
-which is the inconsistency the handout warns about. The last column compares
-the raw-weight setting with libigl's ARAP (spokes energy, the paper's
-energy). libigl computes rotations in single precision, which explains the
-remaining difference.
+replaced for the constraints, as in the class demos. The area-weighted rows
+use `M^{-1}(W - D)` with the mixed areas. "Inconsistent" pairs a row-scaled
+matrix with the paper's unscaled right-hand side, which is the mistake the
+handout warns about. The last row compares the raw-weight setting with
+libigl's ARAP (spokes energy, the paper's energy). libigl fits the rotations
+in single precision, which most likely explains the remaining difference.
 
 ### Limitations
 
 - The constraints are hard, and the set of constrained vertices is fixed
   when the solver is created. A new set means a new factorisation, which
-  takes under 0.1 s here.
+  takes about 0.1 s or less here.
 - Convergence is linear, so a tight tolerance costs many iterations on large
   meshes. The paper's interactive setting runs only a few iterations per
   frame.
@@ -316,5 +335,8 @@ remaining difference.
 - [NumPy](https://numpy.org/): arrays and the batched SVD.
 - [SciPy](https://scipy.org/): sparse matrices and the sparse LU factorisation.
 - [Matplotlib](https://matplotlib.org/): figures.
-- [libigl](https://libigl.github.io/) Python bindings: used only in the tests,
-  as an independent implementation to compare against.
+- [libigl](https://libigl.github.io/) Python bindings: an independent ARAP
+  implementation used only for comparison, in the tests and in two experiment
+  columns (rest-pose drift with raw weights, and the libigl column of the
+  agreement table). The `arap/` package does not use it; without it the tests
+  that need it are skipped and those columns are left empty.

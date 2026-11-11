@@ -1,4 +1,5 @@
 -r requirements.txt
 pytest>=7.0
-# Reference implementation used only to cross-check results in tests.
+# Independent ARAP implementation, used only to cross-check results
+# (tests, and two comparison columns in the experiments).
 libigl==2.6.3

@@ -100,3 +100,45 @@ def area_volume_change(rest, deformed, faces):
         "area_change": a1 / a0 - 1.0,
         "volume_change": None if v0 is None else v1 / v0 - 1.0,
     }
+
+
+def self_intersections(vertices, faces, chunk=256):
+    """Number of places where the surface passes through itself.
+
+    Counts pairs of an edge and a triangle that share no vertex and where the
+    edge crosses the inside of the triangle (Moller-Trumbore test). Two
+    sheets of surface that cross along a curve give a count that grows with
+    the length of that curve, so 0 means the surface does not cross itself
+    and the size of a nonzero count is only a rough measure.
+    """
+    V = np.asarray(vertices, dtype=np.float64)
+    F = np.asarray(faces, dtype=np.int64)
+    E = unique_edges(F)
+    A, B, C = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
+    e1, e2 = B - A, C - A
+    f_lo, f_hi = np.minimum(np.minimum(A, B), C), np.maximum(np.maximum(A, B), C)
+    eps = 1e-12
+    count = 0
+    for start in range(0, len(E), chunk):
+        edges = E[start:start + chunk]
+        P, Q = V[edges[:, 0]], V[edges[:, 1]]
+        lo, hi = np.minimum(P, Q), np.maximum(P, Q)
+        # Only pairs whose bounding boxes overlap and that share no vertex.
+        overlap = np.all((lo[:, None] <= f_hi[None]) & (hi[:, None] >= f_lo[None]), axis=2)
+        shares = (edges[:, None, :, None] == F[None, :, None, :]).any(axis=(2, 3))
+        i, j = np.nonzero(overlap & ~shares)
+        if i.size == 0:
+            continue
+        D = Q[i] - P[i]
+        h = np.cross(D, e2[j])
+        det = np.einsum("ij,ij->i", e1[j], h)
+        ok = np.abs(det) > eps
+        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
+        s = P[i] - A[j]
+        u = inv * np.einsum("ij,ij->i", s, h)
+        q = np.cross(s, e1[j])
+        v = inv * np.einsum("ij,ij->i", D, q)
+        t = inv * np.einsum("ij,ij->i", e2[j], q)
+        hit = ok & (u > eps) & (v > eps) & (u + v < 1.0 - eps) & (t > eps) & (t < 1.0 - eps)
+        count += int(np.count_nonzero(hit))
+    return count

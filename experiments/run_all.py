@@ -1054,7 +1054,7 @@ def write_summary(metrics, path):
                  fmt(m["energy_final"]), fmt(m["edge_error_final"]["rms_relative"]),
                  share(m["distance_rms"]), share(m["distance_same_weights_rms"]),
                  share(m["mirror_asymmetry_rms"]), share(m["mirror_asymmetry_max"]),
-                 "-" if m["kink"] is None else fmt(m["kink"], 2),
+                 "-" if m["kink"] is None else f"{m['kink']:.1f}",
                  pct(m["shape_change_final"]["volume_change"])]
                 for w, by_mesh in tri.items() for name, m in by_mesh.items()]
         floor = max(m["distance_at_rest_rms"] for m in tri["cotangent"].values())
@@ -1147,7 +1147,6 @@ DOC_FIGURES = [
     "large_rotations/twist_270.png",
     "large_rotations/twist_steps.png",
     "large_rotations/twist_narrowest.png",
-    "long_twist/steps.png",
     "triangulation/cotangent.png",
     "triangulation/uniform.png",
     "point_handle/bar.png",

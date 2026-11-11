@@ -15,6 +15,7 @@ def test_area_and_volume_of_a_cylinder():
 def test_rigid_motion_and_scaling_changes():
     V, F = from_geomproc(geomproc.create_cylinder(0.5, 1.0, 30, 5, closed=True))
     Q, _ = np.linalg.qr(np.random.default_rng(0).normal(size=(3, 3)))
+    Q *= np.sign(np.linalg.det(Q))  # a rotation, not a reflection
     moved = V @ Q.T + 1.0
     change = metrics.area_volume_change(V, moved, F)
     assert abs(change["area_change"]) < 1e-12 and abs(change["volume_change"]) < 1e-12
@@ -35,3 +36,14 @@ def test_inside_out_shows_as_a_change_below_minus_100_percent():
     mirrored = V * np.array([-1.0, 1.0, 1.0])  # reflection turns it inside out
     assert np.isclose(metrics.enclosed_volume(mirrored, F), metrics.enclosed_volume(V, F))
     assert np.isclose(metrics.area_volume_change(V, mirrored, F)["volume_change"], -2.0)
+
+
+def test_self_intersections():
+    V, F = from_geomproc(geomproc.create_cylinder(0.5, 1.0, 12, 5, closed=True))
+    assert metrics.self_intersections(V, F) == 0
+    n = V.shape[0]
+    apart = metrics.self_intersections(np.vstack([V, V + [2.0, 0.0, 0.0]]), np.vstack([F, F + n]))
+    assert apart == 0
+    # Two cylinders crossing each other at right angles.
+    crossed = np.vstack([V, V[:, [2, 1, 0]] * [1.0, 1.0, -1.0]])
+    assert metrics.self_intersections(crossed, np.vstack([F, F + n])) > 0

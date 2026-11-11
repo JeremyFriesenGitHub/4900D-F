@@ -73,6 +73,33 @@ def bar_ends(vertices):
             sel.by_coordinate(vertices, "z", above=0.951))
 
 
+def flip_diagonals(vertices, faces):
+    """The same mesh with the diagonal of every side quad of a bar turned the other way.
+
+    Each side quad of ``bar`` is two triangles sharing a diagonal (an edge
+    between two rings and two angles). Both triangles are replaced by the
+    two that share the other diagonal, with the same orientation.
+    """
+    V = np.asarray(vertices)
+    F = np.array(faces, dtype=np.int64)
+    r = np.hypot(V[:, 0], V[:, 1])
+    side = np.flatnonzero(np.all(r[F] > 0.5 * r.max(), axis=1))
+    owner = {}
+    for fi in side:
+        for k in range(3):
+            a, b = F[fi, k], F[fi, (k + 1) % 3]
+            if not np.isclose(V[a, 2], V[b, 2]) and not np.isclose(
+                    np.arctan2(V[a, 1], V[a, 0]), np.arctan2(V[b, 1], V[b, 0])):
+                owner.setdefault((min(a, b), max(a, b)), []).append((fi, k))
+    G = F.copy()
+    for pair in owner.values():
+        (f1, k1), (f2, k2) = pair
+        a, b, c = F[f1, k1], F[f1, (k1 + 1) % 3], F[f1, (k1 + 2) % 3]
+        e = F[f2, (k2 + 2) % 3]  # F[f2] runs b -> a -> e
+        G[f1], G[f2] = (a, e, c), (e, b, c)
+    return G
+
+
 def bend_targets(vertices, handles, angle):
     """Handle positions for bending a bar along z into a circular arc.
 

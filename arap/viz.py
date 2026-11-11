@@ -10,6 +10,9 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection  # noqa: E402
 import numpy as np  # noqa: E402
 
 BASE_COLOR = np.array([0.62, 0.72, 0.86])
+# Cyclic axis permutations that bring the chosen axis to the plotted z axis
+# (cyclic, so orientation is kept).
+_UP = {"z": [0, 1, 2], "y": [2, 0, 1], "x": [1, 2, 0]}
 LIGHT = np.array([0.35, -0.55, 0.75])
 
 
@@ -27,20 +30,24 @@ def _face_colors(vertices, faces, vertex_colors=None):
     return np.clip(base * shade[:, None], 0.0, 1.0)
 
 
-def render_panels(panels, path, view=(20, -60), title=None, panel_size=3.2):
+def render_panels(panels, path, view=(20, -60), title=None, panel_size=3.2,
+                  vertical_axis="z"):
     """Render meshes side by side with a shared scale.
 
     ``panels`` is a list of dicts with keys ``vertices``, ``faces`` and
-    optional ``title`` and ``colors`` (per-vertex RGB).
+    optional ``title``, ``colors`` (per-vertex RGB) and ``view``. ``view`` is
+    ``(elevation, azimuth)`` in degrees and ``vertical_axis`` the axis drawn
+    upwards ("y" for most scanned models).
     """
     k = len(panels)
     fig = plt.figure(figsize=(panel_size * k, panel_size + (0.4 if title else 0.0)))
-    allv = np.vstack([np.asarray(p["vertices"]) for p in panels])
+    order = _UP[vertical_axis]
+    allv = np.vstack([np.asarray(p["vertices"])[:, order] for p in panels])
     center = 0.5 * (allv.max(axis=0) + allv.min(axis=0))
     half = 0.5 * np.max(allv.max(axis=0) - allv.min(axis=0))
     for idx, p in enumerate(panels):
         ax = fig.add_subplot(1, k, idx + 1, projection="3d")
-        V = np.asarray(p["vertices"])
+        V = np.asarray(p["vertices"])[:, order]
         F = np.asarray(p["faces"])
         coll = Poly3DCollection(V[F], facecolors=_face_colors(V, F, p.get("colors")),
                                 edgecolors="none", linewidths=0.0)
@@ -48,13 +55,14 @@ def render_panels(panels, path, view=(20, -60), title=None, panel_size=3.2):
         for setter, c in zip((ax.set_xlim, ax.set_ylim, ax.set_zlim), center):
             setter(c - half, c + half)
         ax.set_box_aspect((1, 1, 1))
-        ax.view_init(elev=view[0], azim=view[1])
+        elev, azim = p.get("view", view)
+        ax.view_init(elev=elev, azim=azim)
         ax.set_axis_off()
         if p.get("title"):
             ax.set_title(p["title"], fontsize=10)
     if title:
         fig.suptitle(title, fontsize=11)
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=0.9 if title else 0.95, wspace=0)
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=0.86 if title else 0.92, wspace=0)
     _save(fig, path)
 
 

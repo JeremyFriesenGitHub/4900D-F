@@ -62,7 +62,11 @@ def render_panels(panels, path, view=(20, -60), title=None, panel_size=3.2,
             ax.set_title(p["title"], fontsize=10)
     if title:
         fig.suptitle(title, fontsize=11)
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=0.86 if title else 0.92, wspace=0)
+    # Room at the top in inches: 0.3 for the panel titles, 0.4 more for the
+    # overall title, so short figures do not overlap them.
+    height = fig.get_size_inches()[1]
+    fig.subplots_adjust(left=0, right=1, bottom=0, wspace=0,
+                        top=1.0 - (0.3 + (0.4 if title else 0.0)) / height)
     _save(fig, path)
 
 
@@ -95,6 +99,29 @@ def plot_scaling(n_vertices, series, path, ylabel="seconds", title=None, logy=Tr
         ax.set_title(title, fontsize=10)
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(fontsize=8)
+    fig.tight_layout()
+    _save(fig, path)
+
+
+def plot_lines(x, series, path, xlabel, ylabel, title=None, reference=None):
+    """Line plot of ``series`` (label -> values) against ``x``.
+
+    ``reference`` is an optional ``(label, x, y)`` drawn as a thin dashed grey
+    line, for example the value a perfect method would reach.
+    """
+    fig, ax = plt.subplots(figsize=(5.0, 3.4))
+    if reference is not None:
+        label, rx, ry = reference
+        ax.plot(rx, ry, color="0.55", linewidth=1.0, linestyle="--", label=label)
+    for label, values in series.items():
+        ax.plot(x, values, linewidth=2.0, marker="o", markersize=3.5, label=label)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if title:
+        ax.set_title(title, fontsize=10)
+    ax.grid(True, alpha=0.3)
+    if len(series) + (reference is not None) > 1:
+        ax.legend(fontsize=8)
     fig.tight_layout()
     _save(fig, path)
 

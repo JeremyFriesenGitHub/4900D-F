@@ -88,3 +88,12 @@ def test_constrained_solver_rejects_duplicates(sphere):
     L, _ = lap.mesh_laplacian(V, F)
     with pytest.raises(ValueError, match="unique"):
         ConstrainedSolver(L, [3, 3])
+
+
+def test_constrained_solver_rejects_a_component_without_constraints(cube):
+    V, F = cube
+    n = V.shape[0]
+    L, _ = lap.mesh_laplacian(np.vstack([V, V + 5.0]), np.vstack([F, F + n]))
+    with pytest.raises(ValueError, match="component"):
+        ConstrainedSolver(L, [0])
+    ConstrainedSolver(L, [0, n])  # one per component is enough

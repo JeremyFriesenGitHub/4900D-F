@@ -21,6 +21,7 @@ is factored once and reused for every solve.
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+from scipy.sparse.csgraph import connected_components
 
 from . import laplacian as lap
 
@@ -44,6 +45,16 @@ class ConstrainedSolver:
             raise ValueError("constrained vertex index out of range")
         if np.unique(constrained).size != constrained.size:
             raise ValueError("constrained indices must be unique")
+        # A part of the matrix's graph with no constrained vertex makes the
+        # free block singular; floating-point LU need not notice, so check.
+        graph = abs(K)
+        graph.eliminate_zeros()
+        _, labels = connected_components(graph, directed=False)
+        if np.setdiff1d(labels, labels[constrained]).size:
+            raise ValueError(
+                "the constrained system is singular: make sure every connected "
+                "component of the mesh contains a constrained vertex"
+            )
         mask = np.ones(n, dtype=bool)
         mask[constrained] = False
         self.n = n

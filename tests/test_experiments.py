@@ -1,6 +1,7 @@
 """Checks of the measurement helpers and bar meshes used by the experiments."""
 
 import numpy as np
+import pytest
 
 from arap import selection as sel
 from experiments import run_all as X
@@ -178,6 +179,11 @@ def test_bar_ends_take_whole_rings():
     assert not np.array_equal(jittered.vertices, regular.vertices)
 
 
+def test_flip_diagonals_rejects_a_jittered_bar():
+    with pytest.raises(ValueError):
+        S.flip_diagonals(*S.irregular_bar())
+
+
 def test_flip_diagonals():
     from arap import laplacian as lap
     from arap.metrics import is_closed, signed_volume, unique_edges
@@ -211,6 +217,9 @@ def test_centre_line_kink():
     # The same arc, but most of the turn is crowded towards the top end.
     assert X.centre_line_kink(V, bent(lambda h: h ** 3)) > 2.5
     assert X.centre_line_kink(V, V + 1.0) == 1.0
+    # A straight bar stays straight when it is turned: rounding must not look like a kink.
+    turn = np.linalg.qr(np.random.default_rng(0).normal(size=(3, 3)))[0]
+    assert X.centre_line_kink(V, V @ turn.T) == 1.0
     W, _ = S.irregular_bar()
     assert X.centre_line_kink(W, W) is None
 

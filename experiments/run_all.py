@@ -254,7 +254,7 @@ def twist_cell(row, key="twist_achieved"):
     if key not in row:
         return "-"
     x = row[key]
-    return "folded" if x is None or np.isnan(x) else str(int(round(x)))
+    return "folded" if x is None or np.isnan(x) else str(int(round(x)))  # see twist_angle
 
 
 def pct(x):
@@ -603,11 +603,12 @@ def large_rotations(out):
         if trace:
             a, reached, narrowest, crossings, energy, iterations, converged = map(
                 np.array, zip(*trace))
-            # Gaps (NaN) where a ring has folded over itself and has no twist angle.
+            # Gaps (NaN) where twist_angle is undefined: a ring folded over itself,
+            # or two neighbouring rings more than 90 degrees apart.
             plot_lines(a, {"twist of the result": reached}, os.path.join(
                 out, "large_rotations", "twist_steps.png"),
                 xlabel="handle rotation (degrees)", ylabel="twist reached (degrees)",
-                title=f"twist in {step}-degree steps (gap: a ring folded, no twist angle)",
+                title=f"twist in {step}-degree steps (gap: folded, twist undefined)",
                 reference=("handle rotation", a, a))
             plot_lines(a, {"narrowest cross-section": narrowest}, os.path.join(
                 out, "large_rotations", "twist_narrowest.png"),
@@ -671,8 +672,10 @@ def centre_line_kink(rest, deformed):
     c = np.array([deformed[ring].mean(axis=0) for ring in rings])
     d = np.diff(c, axis=0)
     d /= np.linalg.norm(d, axis=1, keepdims=True)
-    turn = np.arccos(np.clip(np.einsum("ij,ij->i", d[:-1], d[1:]), -1.0, 1.0))
-    if turn.mean() < 1e-12:
+    # arctan2 keeps full precision for small angles, where arccos loses half the digits.
+    turn = np.arctan2(np.linalg.norm(np.cross(d[:-1], d[1:]), axis=1),
+                      np.einsum("ij,ij->i", d[:-1], d[1:]))
+    if turn.max() < 1e-9:
         return 1.0  # a straight line: evenly bent by nothing
     return float(turn.max() / turn.mean())
 
@@ -709,6 +712,14 @@ def triangulation(out):
     flip_x = np.array([-1.0, 1.0, 1.0])
     reference = ("cotangent", "20 x 41")
     rows, points, panels, rest_points, results = {}, {}, {}, {}, {}
+
+    def asymmetry(V, F, X, diagonal):
+        """Distance between a shape and its mirror image at the sample points."""
+        gap = np.linalg.norm(bar_surface_points(V, F, X, samples)
+                             - bar_surface_points(V, F, X, mirrored) * flip_x, axis=1) / diagonal
+        return {"mirror_asymmetry_rms": float(np.sqrt(np.mean(gap ** 2))),
+                "mirror_asymmetry_max": float(np.max(gap))}
+
     for w in ("cotangent", "uniform"):
         rows[w], panels[w] = {}, []
         for name, (V, F) in meshes.items():
@@ -721,12 +732,11 @@ def triangulation(out):
             results[w, name] = r.vertices
             points[w, name] = bar_surface_points(V, F, r.vertices, samples)
             rest_points[name] = bar_surface_points(V, F, V, samples)
-            mirror = bar_surface_points(V, F, r.vertices, mirrored) * flip_x
-            asym = np.linalg.norm(points[w, name] - mirror, axis=1) / d.diagonal
             m = summarize(r, V, F)
             m.update(vertices=int(V.shape[0]), diagonal=d.diagonal,
-                     mirror_asymmetry_rms=float(np.sqrt(np.mean(asym ** 2))),
-                     mirror_asymmetry_max=float(np.max(asym)),
+                     **asymmetry(V, F, r.vertices, d.diagonal),
+                     mirror_asymmetry_at_rest_rms=asymmetry(V, F, V, d.diagonal)[
+                         "mirror_asymmetry_rms"],
                      kink=centre_line_kink(V, r.vertices))
             rows[w][name] = m
             if name in ("12 x 25", "20 x 41", "16 x 81 (long, thin triangles)", "20 x 81",
@@ -758,10 +768,23 @@ def triangulation(out):
         vertices[w] = {"mirror_asymmetry_max": float(asym.max()),
                        "flip_moves_rms": float(np.sqrt(np.mean(flip ** 2))),
                        "flip_moves_max": float(flip.max())}
+    # The irregular mesh has obtuse triangles; the same bend with the negative
+    # cotangent weights left in, to see how much of the result is the clamp's.
+    V, F = meshes["20 x 41 irregular"]
+    fixed = np.flatnonzero(V[:, 2] <= V[:, 2].min() + 1e-9)
+    handles = np.flatnonzero(V[:, 2] >= V[:, 2].max() - 1e-9)
+    c, t = sel.combine(V, fixed, handles, S.bend_targets(V, handles, 90.0))
+    d = ARAPDeformer(V, F, c, weights="cotangent", clamp="none")
+    r = d.deform(t, max_iterations=MAX_ITERATIONS)
+    W = lap.cotangent_weights(V, F, clamp="none").tocoo()
+    w_raw = W.data[W.row < W.col]  # one entry per edge
+    raw = summarize(r, V, F)
+    raw.update(asymmetry(V, F, r.vertices, d.diagonal), edges=int(w_raw.size),
+               negative_weight_edges=int(np.count_nonzero(w_raw < 0.0)))
     for w, row in panels.items():
         render_panels(row, os.path.join(out, "triangulation", f"{w}.png"), view=(10, 0),
                       panel_size=2.4, title=f"{w} weights (sides x rings)")
-    return {"meshes": rows, "regular_20x41_vertices": vertices}
+    return {"meshes": rows, "regular_20x41_vertices": vertices, "irregular_raw_cotangent": raw}
 
 
 def point_handle(out):
@@ -1021,8 +1044,8 @@ def write_summary(metrics, path):
                   "pass through each other (0: the surface does not cross itself). The twist column "
                   "is the twist of the result, measured ring by ring along the bar (\"folded\": "
                   "the vertices of some ring turned by angles so different that the length of "
-                  "their mean direction is below 0.5, so that ring has no angle and the twist is "
-                  "undefined). \"narrowest\" is the smallest area that a ring of side vertices "
+                  "their mean direction is below 0.5, or two neighbouring rings differ by more "
+                  "than 90 degrees, so the twist is undefined). \"narrowest\" is the smallest area that a ring of side vertices "
                   "winds around when it is projected along the bar's axis, as a fraction of its "
                   "rest area; once rings tilt this projected area is smaller than a cut "
                   "across the bar. Volume changes are of the signed volume: where the surface "
@@ -1065,21 +1088,26 @@ def write_summary(metrics, path):
                 for w, by_mesh in tri.items() for name, m in by_mesh.items()]
         floor = max(m["distance_at_rest_rms"] for m in tri["cotangent"].values())
         vert = metrics["triangulation"]["regular_20x41_vertices"]
+        irregular = tri["cotangent"]["20 x 41 irregular"]
+        raw = metrics["triangulation"]["irregular_raw_cotangent"]
         parts += ["## Triangulation and resolution (bar bent by 90 degrees)", "",
                   "Meshes are named sides x rings. Only the end caps are constrained. "
                   "Distances are measured at 800 fixed points of the bar's side, as a share of the "
                   "bounding-box diagonal, to the 20 x 41 cotangent result and to the 20 x 41 "
                   "result with the same weights. Before any deformation these points already "
-                  f"differ by up to {share(floor)} (RMS) between meshes, since each side is a "
-                  "polygon with its own number of sides. The bend is symmetric about the plane "
+                  f"lie up to {share(floor)} (RMS) from those of the 20 x 41 mesh, since each "
+                  "side is a polygon with its own number of sides. The bend is symmetric about the plane "
                   "x = 0; \"mirror asymmetry\" is the distance between the result and its mirror "
                   "image at the same points. On a regular mesh the points and their mirror images "
                   "lie in triangles whose diagonals run the other way, so an exactly symmetric "
-                  "result still shows a few hundredths of a percent there. \"kink\" is the "
+                  "result still shows a few hundredths of a percent there, and the irregular "
+                  f"mesh shows {share(irregular['mirror_asymmetry_at_rest_rms'])} (RMS) before "
+                  "any deformation. \"kink\" is the "
                   "sharpest turn of the centre line from one ring to the next divided by its mean "
                   "turn (1 for an even arc; \"-\": the rings of the irregular mesh are not level). "
                   "Cotangent energies of different meshes are comparable on the regular meshes "
-                  "only: the irregular mesh has negative cotangent weights, which are clamped "
+                  f"only: on the irregular mesh {raw['negative_weight_edges']} of "
+                  f"{raw['edges']} edges have a negative cotangent weight, which is clamped "
                   "to zero.", "",
                   markdown_table(["weights", "mesh", "vertices", "iterations", "converged",
                                   "energy", "edge error", "distance to cotangent 20 x 41 (RMS)",
@@ -1091,7 +1119,12 @@ def write_summary(metrics, path):
                                   "flipping the diagonals moves the result (RMS)",
                                   "flipping the diagonals moves the result (max)"],
                                  [[w, share(m["mirror_asymmetry_max"]), share(m["flip_moves_rms"]),
-                                   share(m["flip_moves_max"])] for w, m in vert.items()]), ""]
+                                   share(m["flip_moves_max"])] for w, m in vert.items()]), "",
+                  "The irregular mesh with its negative cotangent weights left in (no clamp): "
+                  f"{raw['iterations']} iterations, converged {fmt(raw['converged'])}, energy "
+                  f"{fmt(raw['energy_final'])}, mirror asymmetry "
+                  f"{share(raw['mirror_asymmetry_rms'])} (RMS) and "
+                  f"{share(raw['mirror_asymmetry_max'])} (max).", ""]
     if "point_handle" in metrics:
         rows = [[name, m["handle_vertices"], m["iterations"], fmt(m["energy_final"]),
                  fmt(m["edge_error_final"]["rms_relative"]),

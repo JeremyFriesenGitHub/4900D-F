@@ -47,3 +47,8 @@ def test_self_intersections():
     # Two cylinders crossing each other at right angles.
     crossed = np.vstack([V, V[:, [2, 1, 0]] * [1.0, 1.0, -1.0]])
     assert metrics.self_intersections(crossed, np.vstack([F, F + n])) > 0
+    # Two triangles that pierce each other like chain links: one edge of each
+    # passes through the other, so exactly two pairs.
+    P = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0],
+                  [0.5, 0.5, -1.0], [0.5, 0.5, 1.0], [3.0, 3.0, 0.0]])
+    assert metrics.self_intersections(P, np.array([[0, 1, 2], [3, 4, 5]])) == 2

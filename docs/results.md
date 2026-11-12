@@ -6,12 +6,12 @@ Produced by `python -m experiments.run_all`. Edge error is the RMS of the relati
 
 | scenario | vertices | constrained | iterations | converged | energy never rose | iterations to within 1% | edge error Laplacian | edge error ARAP | largest move after iteration 100 | setup (s) | ms / iteration |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| bar_bend | 822 | 82 | 128 | yes | yes | 31 | 0.191 | 0.065 | 0.00047 | 0.00505 | 3.18 |
-| bar_twist | 822 | 82 | 440 | yes | yes | 131 | 0.174 | 0.0668 | 0.028 | 0.00508 | 3.28 |
-| hinge | 6002 | 1202 | 132 | yes | yes | 108 | 0.669 | 0.011 | 0.00056 | 0.0263 | 23.3 |
-| bunny_ears | 2503 | 881 | 155 | yes | yes | 22 | 0.0679 | 0.0362 | 0.0013 | 0.0116 | 9.94 |
-| kid_arms | 8441 | 724 | 862 | yes | yes | 90 | 0.201 | 0.0406 | 0.042 | 0.0435 | 36.6 |
-| camel_drink | 9770 | 3381 | 797 | yes | yes | 96 | 0.1 | 0.0168 | 0.02 | 0.0363 | 40.6 |
+| bar_bend | 822 | 82 | 128 | yes | yes | 31 | 0.191 | 0.065 | 0.00047 | 0.00505 | 3.2 |
+| bar_twist | 822 | 82 | 440 | yes | yes | 131 | 0.174 | 0.0668 | 0.028 | 0.00507 | 3.3 |
+| hinge | 6002 | 1202 | 132 | yes | yes | 108 | 0.669 | 0.011 | 0.00056 | 0.0273 | 21.9 |
+| bunny_ears | 2503 | 881 | 155 | yes | yes | 22 | 0.0679 | 0.0362 | 0.0013 | 0.0138 | 10.3 |
+| kid_arms | 8441 | 724 | 862 | yes | yes | 90 | 0.201 | 0.0406 | 0.042 | 0.0424 | 36.8 |
+| camel_drink | 9770 | 3381 | 797 | yes | yes | 96 | 0.1 | 0.0168 | 0.02 | 0.0384 | 42.1 |
 
 Change of surface area and enclosed volume ("-": the mesh is open, so it encloses no volume).
 
@@ -57,15 +57,15 @@ Hinge, edge error inside the top block: Laplacian 0.331, ARAP 0.000221.
 
 | scenario | initial guess | iterations | iterations to within 1% | energy start | energy end | distance to Laplacian-start result | seconds |
 |---|---|---|---|---|---|---|---|
-| bar_bend | laplacian | 128 | 31 | 0.216 | 0.0156 | 0 | 0.445 |
-| bar_bend | thin_plate | 118 | 14 | 0.114 | 0.0156 | 0.000422 | 0.38 |
-| bar_bend | rest | 142 | 38 | 22.5 | 0.0156 | 5.02e-05 | 0.471 |
-| hinge | laplacian | 132 | 108 | 2.79 | 0.000599 | 0 | 3.07 |
-| hinge | thin_plate | 93 | 65 | 0.474 | 0.000596 | 0.000586 | 2.19 |
-| hinge | rest | 227 | 201 | 335 | 0.000598 | 0.000438 | 5.34 |
-| camel_drink | laplacian | 797 | 96 | 0.178 | 0.0102 | 0 | 33 |
-| camel_drink | thin_plate | 781 | 146 | 0.165 | 0.0102 | 0.000802 | 32.3 |
-| camel_drink | rest | 798 | 97 | 23.1 | 0.0102 | 2.78e-06 | 32.8 |
+| bar_bend | laplacian | 128 | 31 | 0.216 | 0.0156 | 0 | 0.429 |
+| bar_bend | thin_plate | 118 | 14 | 0.114 | 0.0156 | 0.000422 | 0.379 |
+| bar_bend | rest | 142 | 38 | 22.5 | 0.0156 | 5.02e-05 | 0.442 |
+| hinge | laplacian | 132 | 108 | 2.79 | 0.000599 | 0 | 3.04 |
+| hinge | thin_plate | 93 | 65 | 0.474 | 0.000596 | 0.000586 | 2.12 |
+| hinge | rest | 227 | 201 | 335 | 0.000598 | 0.000438 | 5.05 |
+| camel_drink | laplacian | 797 | 96 | 0.178 | 0.0102 | 0 | 32.1 |
+| camel_drink | thin_plate | 781 | 146 | 0.165 | 0.0102 | 0.000802 | 31.7 |
+| camel_drink | rest | 798 | 97 | 23.1 | 0.0102 | 2.78e-06 | 32.1 |
 
 ## Timing (bar bend, 20 iterations)
 
@@ -73,12 +73,12 @@ Medians of repeated runs. The dense global step is one row-replaced `numpy.linal
 
 | vertices | setup (s) | local step (ms) | global step (ms) | dense global step (ms) | GeomProc Laplacian build (s) |
 |---|---|---|---|---|---|
-| 302 | 0.00262 | 0.934 | 0.153 | 1.46 | 0.109 |
-| 822 | 0.00417 | 2.5 | 0.371 | 10.5 | 0.302 |
-| 2594 | 0.00911 | 7.61 | 1.1 | 151 | 0.984 |
-| 5810 | 0.019 | 16.7 | 2.62 | 1.1e+03 | 2.26 |
-| 10306 | 0.0341 | 31.4 | 4.88 | - | - |
-| 23138 | 0.0915 | 67.3 | 11.3 | - | - |
+| 302 | 0.00256 | 0.935 | 0.154 | 1.48 | 0.106 |
+| 822 | 0.00426 | 2.5 | 0.361 | 10.5 | 0.298 |
+| 2594 | 0.00981 | 7.5 | 1.09 | 150 | 0.954 |
+| 5810 | 0.0195 | 16.4 | 2.46 | 1.03e+03 | 2.25 |
+| 10306 | 0.0333 | 28.8 | 4.73 | - | - |
+| 23138 | 0.0884 | 68.8 | 11.4 | - | - |
 
 ## Agreement with GeomProc's operator and with libigl
 
@@ -91,7 +91,7 @@ Largest distance between corresponding vertices, divided by the bounding-box dia
 
 ## Large rotations
 
-Bends use a bar of radius 0.05, twists the default (slightly jittered) bar. Every solve stops when an iteration lowers the energy by less than 1e-08 of the starting energy and moves no vertex more than 1e-06 of the diagonal, or after 10000 iterations. "steps" moves the handle 10 degrees at a time and starts each solve from the previous result; its iteration count is the total over all steps and "converged" refers to the last step. "crossings" counts the pairs of an edge and a triangle that pass through each other (0: the surface does not cross itself). The twist column is the twist of the result, measured ring by ring along the bar ("folded": the vertices of some ring turned by angles so different that the length of their mean direction is below 0.5, so that ring has no angle and the twist is undefined). "narrowest" is the smallest area that a ring of side vertices winds around when it is projected along the bar's axis, as a fraction of its rest area; once rings tilt this projected area is smaller than a cut across the bar. Volume changes are of the signed volume: where the surface crosses itself, parts that are turned inside out count negatively, and below -100 % the signed volume is negative.
+Bends use a bar of radius 0.05, twists the default (slightly jittered) bar. Every solve stops when an iteration lowers the energy by less than 1e-08 of the starting energy and moves no vertex more than 1e-06 of the diagonal, or after 10000 iterations. "steps" moves the handle 10 degrees at a time and starts each solve from the previous result; its iteration count is the total over all steps and "converged" refers to the last step. "crossings" counts the pairs of an edge and a triangle that pass through each other (0: the surface does not cross itself). The twist column is the twist of the result, measured ring by ring along the bar ("folded": the vertices of some ring turned by angles so different that the length of their mean direction is below 0.5, or two neighbouring rings differ by more than 90 degrees, so the twist is undefined). "narrowest" is the smallest area that a ring of side vertices winds around when it is projected along the bar's axis, as a fraction of its rest area; once rings tilt this projected area is smaller than a cut across the bar. Volume changes are of the signed volume: where the surface crosses itself, parts that are turned inside out count negatively, and below -100 % the signed volume is negative.
 
 | deformation | degrees | start | iterations | converged | energy | edge error | volume change | crossings | twist reached | narrowest |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -174,7 +174,7 @@ Twist in 10-degree steps on a bar three times as long (same radius, ring spacing
 
 ## Triangulation and resolution (bar bent by 90 degrees)
 
-Meshes are named sides x rings. Only the end caps are constrained. Distances are measured at 800 fixed points of the bar's side, as a share of the bounding-box diagonal, to the 20 x 41 cotangent result and to the 20 x 41 result with the same weights. Before any deformation these points already differ by up to 0.18% (RMS) between meshes, since each side is a polygon with its own number of sides. The bend is symmetric about the plane x = 0; "mirror asymmetry" is the distance between the result and its mirror image at the same points. On a regular mesh the points and their mirror images lie in triangles whose diagonals run the other way, so an exactly symmetric result still shows a few hundredths of a percent there. "kink" is the sharpest turn of the centre line from one ring to the next divided by its mean turn (1 for an even arc; "-": the rings of the irregular mesh are not level). Cotangent energies of different meshes are comparable on the regular meshes only: the irregular mesh has negative cotangent weights, which are clamped to zero.
+Meshes are named sides x rings. Only the end caps are constrained. Distances are measured at 800 fixed points of the bar's side, as a share of the bounding-box diagonal, to the 20 x 41 cotangent result and to the 20 x 41 result with the same weights. Before any deformation these points already lie up to 0.18% (RMS) from those of the 20 x 41 mesh, since each side is a polygon with its own number of sides. The bend is symmetric about the plane x = 0; "mirror asymmetry" is the distance between the result and its mirror image at the same points. On a regular mesh the points and their mirror images lie in triangles whose diagonals run the other way, so an exactly symmetric result still shows a few hundredths of a percent there, and the irregular mesh shows 0.05% (RMS) before any deformation. "kink" is the sharpest turn of the centre line from one ring to the next divided by its mean turn (1 for an even arc; "-": the rings of the irregular mesh are not level). Cotangent energies of different meshes are comparable on the regular meshes only: on the irregular mesh 400 of 2460 edges have a negative cotangent weight, which is clamped to zero.
 
 | weights | mesh | vertices | iterations | converged | energy | edge error | distance to cotangent 20 x 41 (RMS) | distance to same weights' 20 x 41 (RMS) | mirror asymmetry (RMS) | mirror asymmetry (max) | kink | volume change |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -207,6 +207,8 @@ Vertex by vertex on the regular 20 x 41 mesh, with no interpolation:
 |---|---|---|---|
 | cotangent | 0.00% | 0.00% | 0.00% |
 | uniform | 1.53% | 0.99% | 1.53% |
+
+The irregular mesh with its negative cotangent weights left in (no clamp): 588 iterations, converged yes, energy 0.0144, mirror asymmetry 0.35% (RMS) and 1.53% (max).
 
 ## One handle vertex against a handle patch (bar, 90-degree bend)
 

@@ -49,7 +49,7 @@ set of constrained vertices stays the same. Options:
 | `weights` | `"cotangent"`, `"uniform"` | `"cotangent"` |
 | `clamp` (negative cotangent weights) | `"zero"`, `"none"` (paper), `"geomproc"` | `"zero"` |
 | `init` in `deform` | `"laplacian"` (slides), `"thin_plate"`, `"rest"`, or an (n, 3) array | `"laplacian"` |
-| `max_iterations`, `energy_tol`, `step_tol` | stopping rule, see below | 500, `1e-6`, `1e-5` (the experiments allow 1000 iterations) |
+| `max_iterations`, `energy_tol`, `step_tol` | stopping rule, see below | 500, `1e-6`, `1e-5` (most experiments allow 1000 iterations) |
 
 Experiments and tests:
 
@@ -186,34 +186,37 @@ system symmetric positive definite.
 ## Results
 
 All numbers come from one run of `python -m experiments.run_all` (about 25
-minutes) on a shared 4-core 2.1 GHz Xeon virtual machine with Python 3.13,
-NumPy 2.5 and SciPy 1.18. On that machine timings can differ by more than
-50 % between runs of the same code; every other number is the same from run
-to run.
-The full tables are in [docs/results.md](docs/results.md). Edge error is the
-RMS of the relative edge-length change `(|e'| - |e|) / |e|` over all edges;
-distances are divided by the bounding-box diagonal. The loaded meshes are
-normalised with GeomProc so their longest side spans [-1, 1]; the synthetic
-bar (GeomProc's `create_cylinder`) has radius 0.1 and length 1. The Timing
-table gives medians of repeated runs. "ms per iteration" in the Deformations
-table is the mean over the iterations of a single run and includes the energy
-and the convergence test, and the camel's run time is also from one run.
+minutes), except three about the regular bar's twist in "Why the twisted bar
+is jittered" (the 107° threshold, edge error 0.076 and volume change −6.1 %),
+which come from separate runs of `bar_twist(jitter=0)`. The run was made on a
+shared 4-core 2.1 GHz Xeon virtual machine with Python 3.13, NumPy 2.5 and
+SciPy 1.18. On that machine timings can differ by more than 50 % between runs
+of the same code; every other number is the same from run to run. The full
+tables are in [docs/results.md](docs/results.md). Edge error is the RMS of the
+relative edge-length change `(|e'| - |e|) / |e|` over all edges; distances are
+divided by the bounding-box diagonal. The loaded meshes are normalised with
+GeomProc so their longest side spans [-1, 1]; the synthetic bar (GeomProc's
+`create_cylinder`) has radius 0.1 and length 1. The Timing table gives medians
+of repeated runs. "ms per iteration" in the Deformations table is the mean
+over the iterations of a single run and includes the energy and the
+convergence test, and the camel's run time is also from one run.
 
 ### Deformations
 
 | scenario | vertices | constrained | iterations | within 1 % of final energy after | edge error, Laplacian editing | edge error, ARAP | largest move after iteration 100 | ms per iteration |
 |---|---|---|---|---|---|---|---|---|
 | bar bend, 90° | 822 | 82 | 128 | 31 | 0.191 | 0.065 | 0.05 % | 3.2 |
-| bar twist, 135° | 822 | 82 | 440 | 131 | 0.174 | 0.067 | 2.9 % | 3.3 |
-| two-part cylinder hinge, 60° | 6 002 | 1 202 | 132 | 108 | 0.669 | 0.011 | 0.06 % | 23 |
-| bunny ears | 2 503 | 881 | 155 | 22 | 0.068 | 0.036 | 0.13 % | 9.9 |
+| bar twist, 135° | 822 | 82 | 440 | 131 | 0.174 | 0.067 | 2.8 % | 3.3 |
+| two-part cylinder hinge, 60° | 6 002 | 1 202 | 132 | 108 | 0.669 | 0.011 | 0.06 % | 22 |
+| bunny ears | 2 503 | 881 | 155 | 22 | 0.068 | 0.036 | 0.13 % | 10 |
 | kid raising its arms | 8 441 | 724 | 862 | 90 | 0.201 | 0.041 | 4.2 % | 37 |
-| camel lowering its head | 9 770 | 3 381 | 797 | 96 | 0.100 | 0.017 | 2.0 % | 41 |
+| camel lowering its head | 9 770 | 3 381 | 797 | 96 | 0.100 | 0.017 | 2.0 % | 42 |
 
-ARAP also keeps the size of the shape much better, except for the bunny's
-area, which changes slightly more than with Laplacian editing. Change of
-surface area and enclosed volume (the bunny is an open mesh, so it encloses no
-volume):
+ARAP also keeps the size of the shape much better in most cases. The
+exceptions are the bunny's area, which changes slightly more than with
+Laplacian editing, and the twisted bar's volume, where the gain is small
+(−11.5 % against −16.9 %). Change of surface area and enclosed volume (the
+bunny is an open mesh, so it encloses no volume):
 
 | scenario | area, Laplacian editing | area, ARAP | volume, Laplacian editing | volume, ARAP |
 |---|---|---|---|---|
@@ -234,18 +237,18 @@ of its area at 130° and 69 % at 140°). The twist keeps less of its volume
 than the bend but still more than Laplacian editing, which loses 17 %.
 
 **Why the twisted bar is jittered.** The regular bar, its constraints and the
-Laplacian-editing start are all symmetric under turning by one side (18°),
-and every iteration keeps that symmetry, so the solver can only produce evenly
+Laplacian-editing start are all symmetric under turning by one side (18°), and
+every iteration keeps that symmetry, so the solver can only produce evenly
 twisted shapes. Past about 107° an even twist is no longer a minimum: a
 flattened cross-section has lower energy. With nothing to push it off, the
 solver stays on the even twist until the stopping rule fires; at 135° it
 accepted a shape with edge error 0.076 and volume change −6.1 % whose energy
-drops by 3.6 % once a small nudge lets it leave (stability check below). The twist scenario
-therefore moves the side vertices along the surface by up to 2 % of their
-spacing. That is invisible, but it breaks the symmetry, and the solver then
-reaches the minimum. It needs more iterations to get there (440), and the
-shape still changes by up to 2.9 % of the diagonal after iteration 100 as the
-cross-section flattens.
+drops by 3.6 % once a small nudge lets it leave (stability check below). The
+twist scenario therefore moves the side vertices along the surface by up to 2
+% of their spacing. That is invisible, but it breaks the symmetry, and the
+solver then reaches a local minimum, a flattened but still twisted tube. It
+needs more iterations to get there (440), and the shape still changes by up to
+2.8 % of the diagonal after iteration 100 as the cross-section flattens.
 
 Fixed vertices are red and handles yellow (the twisted bar's other vertices
 are striped so the twist shows). Each row shows the rest pose, Laplacian
@@ -273,13 +276,13 @@ editing (the initial guess) and the converged ARAP result.
 
 ![Edge-length change in the bent bar](docs/figures/bar_bend_stretch.png)
 
-**Convergence.** The energy decreased at every iteration in every run, as the
+**Convergence.** The energy decreased at every iteration in all six runs, as the
 two exact steps guarantee. Most of the change happens early: the energy is
 within 1 % of its final value after 22 to 131 iterations. The shape does not
 always settle as fast as the energy. After iteration 100 the bar bend, the
 hinge and the bunny move by at most 0.13 % of the diagonal, but the camel
-still moves by 2.0 %, the twisted bar by 2.9 % and the kid by 4.2 % (its arms
-keep swinging slowly). The stopping rule keeps iterating while vertices creep
+still moves by 2.0 %, the twisted bar by 2.8 % and the kid by 4.2 % (its head and
+upper body keep leaning slowly). The stopping rule keeps iterating while vertices creep
 by more than `1e-5` of the diagonal, which takes 128 to 862 iterations in all.
 
 **Why this is far more than the paper's 2 to 3 iterations.** The paper's
@@ -299,26 +302,27 @@ the triangulation experiment below shows the same.
 | vertices | setup (weights + factorisation) | local step | global step (sparse) | global step (dense, GeomProc operator) | building GeomProc's operator |
 |---|---|---|---|---|---|
 | 822 | 4 ms | 2.5 ms | 0.4 ms | 11 ms | 0.30 s |
-| 2 594 | 9 ms | 7.6 ms | 1.1 ms | 151 ms | 0.98 s |
-| 5 810 | 19 ms | 17 ms | 2.6 ms | 1 098 ms | 2.3 s |
-| 23 138 | 92 ms | 67 ms | 11 ms | not run | not run |
+| 2 594 | 10 ms | 7.5 ms | 1.1 ms | 150 ms | 0.95 s |
+| 5 810 | 19 ms | 16 ms | 2.5 ms | 1 030 ms | 2.3 s |
+| 23 138 | 88 ms | 69 ms | 11 ms | not run | not run |
 
 ![Dense against sparse solves](docs/figures/scaling_dense_vs_sparse.png)
 
 Times are for the bar bend on cylinders of increasing resolution. Each
 iteration is dominated by the local step (the covariances and the batched
 SVD). Because the factorisation is reused, the global step is six to seven
-times cheaper than the local step, and hundreds of times cheaper than a dense
-`numpy.linalg.solve` on GeomProc's matrix (about 400 times at 5 810 vertices,
-with NumPy's dense solve using all four cores). A full ARAP run on the
-10 000-vertex camel takes about 32 seconds, most of it in the final creeping
+times cheaper than the local step. It is also about 30 to 400 times cheaper
+than a dense `numpy.linalg.solve` on GeomProc's matrix, more so as the mesh
+grows (about 30 times at 822 vertices, 140 at 2 594 and 400 at 5 810, with
+NumPy's dense solve using all four cores). A full ARAP run on the
+10 000-vertex camel takes about 33 seconds, most of it in the final creeping
 iterations.
 
 ### Negative cotangent weights
 
 | mesh | edges with a negative raw weight | drift after 50 iterations, raw weights | same with libigl | drift, clamped at zero |
 |---|---|---|---|---|
-| bunny | 7.2 % | 0.072 | 0.072 | 4e-14 |
+| bunny | 7.1 % | 0.072 | 0.072 | 4e-14 |
 | camel | 11.9 % | 0.148 | 0.148 | 1e-13 |
 | kid | 5.2 % | 0.028 | 0.028 | 1e-13 |
 
@@ -409,7 +413,7 @@ energies, with the full table in [docs/results.md](docs/results.md):
 | bend 180° | 0.0081 | 0.0081 | 0.0081 |
 | bend 270° | 0.050, passes through itself | 0.015 | 0.015, the same loop |
 | twist 90° | 0.016 | 0.016 | 0.016 |
-| twist 180° | 0.030, folded through itself | 0.030 (iteration limit), the same | 0.052, twisted, flattened in the middle |
+| twist 180° | 0.030, folded through itself | 0.030 (iteration limit), also folded | 0.052, twisted, flattened in the middle |
 | twist 270° | 0.016, a 90° twist the other way | 0.016, the same | 0.025, a −90° twist with a fold left in it |
 | twist 360° | 0, the rest pose | 0, the rest pose | 1e-9, the rest pose |
 
@@ -433,35 +437,38 @@ energies, with the full table in [docs/results.md](docs/results.md):
   and after 360° exactly where they started. A single solve therefore returns
   a 90° twist the other way for 270°, and the untwisted bar for 360°, from
   either start.
-- **On this bar, a twist past about 110° flattens the tube.** Up to 110° the
-  stepped twist is even and every cross-section keeps at least 95 % of its
-  area. From 120° on, the cross-section in the middle flattens into an oval
-  and narrows step by step, to 87 % of its rest area at 120°, 57 % at 150°
-  and 17 % at 180°, while the energy rises steadily (0.024 at 110°, 0.040 at
-  150°, 0.052 at 180°). At 180° the walls in the middle start to pass through
-  each other (40 crossing pairs). From 190° to 240° rings in the middle fold
-  over themselves, so the twist is undefined (the gap in the plot), and the
-  narrowest cross-section falls to 3 % to 14 %. At 250° the fold opens partly
-  and the energy drops from 0.065 to 0.028: the twist now reads −110°, but
-  the walls still cross. At 280° the bar is an even −80° twist with the same
-  energy as the +80° step, which then unwinds evenly to the rest pose at
-  360°.
+- **On this bar, a twist past about 107° flattens the tube.** Up to 100° the
+  stepped twist is even and every cross-section keeps about 96 % of its area
+  or more. The flattening begins between 100° and 110° (in the stability check
+  below, the regular bar's even twist is a minimum at 105° but not at 110°);
+  the energy is almost flat there, so the 110° step, at 95 %, has barely
+  started to flatten when even the tighter rule stops it. From 120° on, the
+  cross-section in the middle flattens into an oval and narrows step by step,
+  to 87 % of its rest area at 120°, 57 % at 150° and 17 % at 180°, while the
+  energy rises steadily (0.024 at 110°, 0.040 at 150°, 0.052 at 180°). At 180°
+  the walls in the middle start to pass through each other (40 crossing
+  pairs). From 190° to 240° rings in the middle fold over themselves, so the
+  twist is undefined (the gap in the plot), and the narrowest cross-section
+  falls to 3 % to 14 %. At 250° the fold opens partly and the energy drops
+  from 0.065 to 0.028: the twist now reads −110°, but the walls still cross.
+  At 280° the bar is an even −80° twist with the same energy as the +80° step,
+  which then unwinds evenly to the rest pose at 360°.
 - **A single solve at 180° folds the tube instead.** From either guess the
-  180° twist buckles and folds through itself into a shape with energy 0.030,
+  180° twist buckles and folds through itself, into shapes with energy 0.030,
   far below the stepped, still twisted shape's 0.052, which is a separate
-  local minimum (it passes the stability check below). ARAP has no explicit bending
-  term and no volume term, so a hollow tube can lower its energy by
-  flattening, folding or buckling instead of twisting evenly. These solves
-  are slow: 9 509 iterations from the Laplacian guess, and the thin-plate
-  start was still creeping at the 10 000-iteration limit.
+  local minimum (it passes the stability check below). ARAP has no explicit
+  bending term and no volume term, so a hollow tube can lower its energy by
+  flattening, folding or buckling instead of twisting evenly. These solves are
+  slow: 9 509 iterations from the Laplacian guess, and the thin-plate start
+  was still creeping at the 10 000-iteration limit.
 - **The limit depends on the bar's proportions.** On a bar three times as
   long, with the same radius, ring spacing, jitter and end slabs (2 422
   vertices), the 10° steps reach a real 270° twist: no walls cross, every
-  cross-section keeps at least 97 % of its area, and the energy rises smoothly
+  cross-section keeps about 97 % of its area or more, and the energy rises smoothly
   to 0.046 (second step table in [docs/results.md](docs/results.md)). That is
   90° of twist per unit length, as in the default bar's 90° twist, which is
   just as clean. So the steps do hold a twist past 180°; what the default
-  bar cannot take is more than about 110° of twist over its length.
+  bar cannot take is more than about 107° of twist over its length.
 
 ![Bar twisted by 180 degrees](docs/figures/large_rotations_twist_180.png)
 ![Bar twisted by 270 degrees](docs/figures/large_rotations_twist_270.png)
@@ -473,8 +480,9 @@ projected along the bar's axis, as a share of its rest area. Once rings tilt,
 this projected area is smaller than a cut straight across the bar, so it
 exaggerates the narrowing of strongly deformed rings. "Folded" means the
 vertices of a ring turned by angles so different that the length of their
-mean direction is below 0.5; it is a threshold on how well they agree, not a
-test for folded triangles. The volume changes in
+mean direction is below 0.5, or that two neighbouring rings differ by more
+than 90°; it is a threshold on how well the angles agree, not a test for
+folded triangles. The volume changes in
 [docs/results.md](docs/results.md) are changes of the signed volume, so where
 the walls cross they are not the volume of any real solid. With that caveat:
 the bends that work lose 0.3 % (90°), 3.5 % (180°) and 14 % (270°) of their
@@ -519,8 +527,8 @@ randomly along the surface by up to 20 % of the spacing ("irregular"; up to
 constraints mean the same thing on every mesh. Results are compared at 800
 fixed points of the bar's side, found by their barycentric coordinates in the
 rest mesh; distances are shares of the bounding-box diagonal. Before any
-deformation these points already differ by up to 0.18 % between meshes,
-because each side is a polygon with its own number of sides.
+deformation these points already lie up to 0.18 % (RMS) from those of the
+20 × 41 mesh, because each side is a polygon with its own number of sides.
 
 **Does the result depend on the triangles?** The bend is symmetric about the
 plane x = 0, and so is a regular bar as a set of points, but its triangles are
@@ -535,59 +543,68 @@ when the diagonals are flipped.
 | 20 × 41: how far flipping every diagonal moves the result (RMS / max) | 0.00 % / 0.00 % | 0.99 % / 1.53 % |
 | 20 × 41 irregular: result against its mirror image (RMS) | 0.18 % | 1.0 % |
 
-- **Cotangent weights make the result far less dependent on the
-  triangulation, as the paper says.** Uniform weights treat a diagonal like
-  any other edge, so the result leans towards the diagonals: flipping them
-  moves it by up to 1.5 % of the diagonal, and it is up to 1.5 % away from its
-  own mirror image. On the regular meshes the cotangent weight of every
-  diagonal is exactly zero (it is opposite two right angles), so there the
-  cotangent result cannot depend on the diagonals at all; that part of the
-  test holds by construction. The irregular mesh is the stronger test,
+- **Cotangent weights, clamped as everywhere here, make the result far less
+  dependent on the triangulation, as the paper says.** Uniform weights treat a
+  diagonal like any other edge, so the result leans towards the diagonals:
+  flipping them moves it by up to 1.5 % of the diagonal, and it is up to 1.5 %
+  away from its own mirror image. On the regular meshes the cotangent weight
+  of every diagonal is exactly zero (it is opposite two right angles), so
+  there the cotangent result cannot depend on the diagonals at all; that part
+  of the test holds by construction. The irregular mesh is the stronger test,
   because its cotangent weights do depend on the triangles, and its vertices
-  are placed at random, so no result on it can be exactly symmetric: the
-  cotangent result is 0.18 % (RMS) from its mirror image, the uniform result
-  1.0 %. Jittering also gives some edges a negative cotangent weight, which
-  the default clamp sets to zero. Measured against the 20 × 41 result with
-  the same weights, as in the table in [docs/results.md](docs/results.md),
-  the two weightings look about equally insensitive on the meshes that keep
-  the even arc (0.1 % to 0.4 % for cotangent, 0.1 % to 0.6 % for uniform),
-  because every uniform result on a regular mesh leans the same way as the
-  uniform reference.
+  are placed at random, so no result on it can be exactly symmetric (its
+  sample points are already 0.05 % from their mirror images before any
+  deformation): the cotangent result is 0.18 % (RMS) from its mirror image,
+  the uniform result 1.0 %. This holds for the clamped weights only. Jittering
+  gives 400 of the mesh's 2 460 edges a negative cotangent weight, which the
+  default clamp sets to zero; with the negative weights left in, the result is
+  0.35 % (RMS) and up to 1.5 % from its mirror image, as far at its worst
+  point as the uniform result. Measured against the 20 × 41 result with the
+  same weights, as in the table in [docs/results.md](docs/results.md), the two
+  weightings look about equally insensitive on the meshes that keep the even
+  arc and have their diagonals the same way round as the reference (0.1 % to
+  0.4 % for cotangent, 0.1 % to 0.6 % for uniform), because every such uniform
+  result leans the same way as the uniform reference. The flipped mesh shows
+  the difference in that column too: 0.02 % for cotangent, 1.04 % for uniform.
 - **On finer meshes the bar kinks instead of bending evenly.** The kink
   measure in [docs/results.md](docs/results.md) is the sharpest turn of the
   bar's centre line from one ring to the next, divided by its mean turn (1 for
   an even arc). With cotangent weights the bend stays an even arc (1.0 to 1.6)
   on 12 × 25, 20 × 41, 16 × 81 and 12 × 81, and creases near the ends (2.5 to
   7.6) on 32 × 41, 20 × 81, 12 × 161, 32 × 81 and 48 × 77. Whether it kinks
-  depends on the spacing along the bar as much as on the number of sides:
-  20 sides kink with 81 rings but not with 41, 12 sides with 161 rings but
-  not with 81. The kinked shapes have lower energy than the even arc, and the
-  energy keeps falling as the mesh gets finer (0.0148 at 20 × 41, 0.0139 at
-  20 × 81, 0.0134 at 32 × 41, 0.0113 at 32 × 81, 0.00925 at 48 × 77). Uniform
-  weights keep the arc on 20 × 81, 12 × 161 and 32 × 81, dent on 32 × 41 and
-  kink on 48 × 77. We read this as a property of the energy, not a numerical
-  error: in the stability check below the kinked 32 × 81 result, nudged or
-  not, converges to the same kinked shape with an energy 0.07 % below where
-  the 1 000-iteration limit stopped it, so it is a minimum the solver was
-  still approaching, not a balanced state that a nudge tips over. ARAP has
-  no explicit
-  bending term: it penalises each vertex neighbourhood for any change other
-  than a rotation, and a neighbourhood that only bends with the surface costs
-  a little, but that cost falls as the triangles get smaller. The inner side
-  of an even bend with a round cross-section has to compress by about 16 %;
-  creasing avoids much of that compression at the price of sharp bending,
+  depends on the spacing along the bar as much as on the number of sides: 20
+  sides kink with 81 rings but not with 41, 12 sides with 161 rings but not
+  with 81. The kinked shapes have lower energy than the even arc, and the
+  energy keeps falling as the mesh gets finer (0.0148 at 20 × 41, 0.0139 at 20
+  × 81, 0.0134 at 32 × 41, 0.0113 at 32 × 81, 0.00925 at 48 × 77). Uniform
+  weights keep the arc on 20 × 81, 12 × 161 and 32 × 81. On 32 × 41 their
+  centre line stays nearly even (1.6) but the tube is dented: it loses 10.9 %
+  of its volume and is 1.9 % from the uniform 20 × 41 result. On 48 × 77 they
+  kink (3.7). We read this as a property of the energy, not a numerical error:
+  in the stability check below the kinked 32 × 81 result, nudged or not,
+  converges to the same kinked shape with an energy 0.07 % below where the 1
+  000-iteration limit stopped it, so it is a minimum the solver was still
+  approaching, not a balanced state that a nudge tips over. ARAP has no
+  explicit bending term: it penalises each vertex neighbourhood for any change
+  other than a rotation, and a neighbourhood that only bends with the surface
+  costs a little, but that cost falls as the triangles get smaller. The inner
+  side of an even bend with a round cross-section has to compress by about 16
+  %; creasing avoids much of that compression at the price of sharp bending,
   which a finer mesh pays less for. Coarse meshes are too stiff to crease, so
   they give the even arc. On the meshes tested (up to 48 sides and 161 rings)
   the ARAP result for this thin hollow bar depends on the resolution, and
   refining the mesh does not settle on one answer.
-- **Iterations grow with resolution**, as the paper says: on the regular
-  meshes that keep the even arc, cotangent weights need 62, 124 and 251
-  iterations at 302, 822 and 1 298 vertices. The four finest kinked meshes
-  reach the 1 000-iteration limit while still creeping. Cotangent energies can
-  be compared between the regular meshes; on the irregular mesh the clamped
-  weights change the energy. With uniform weights the energy also depends on
-  the shape of the triangles (0.0075 on the long thin triangles against 0.019
-  on 20 × 41).
+- **Iterations grow with resolution**, as the paper says, though not steadily:
+  on the regular meshes that keep the even arc, cotangent weights need 62,
+  124, 114 and 251 iterations at 302, 822, 974 and 1 298 vertices. The four
+  finest kinked meshes reach the 1 000-iteration limit while still creeping.
+  Cotangent energies can be compared between the regular meshes; on the
+  irregular mesh the clamped weights change the energy. With uniform weights
+  the energy also depends on the shape of the triangles (0.0075 on the long
+  thin triangles against 0.019 on 20 × 41).
+
+![Bend on different meshes, cotangent weights](docs/figures/triangulation_cotangent.png)
+![Bend on different meshes, uniform weights](docs/figures/triangulation_uniform.png)
 
 ### Is each result a minimum?
 
@@ -598,8 +615,12 @@ because each iteration keeps the symmetry. The `stability` experiment
 therefore continues key results in two ways with a much tighter rule
 (`energy_tol=1e-10`, `step_tol=1e-8`, up to 5 000 iterations): as they are,
 and after every free vertex has been moved at random by up to 0.1 % of the
-diagonal. From a minimum both runs end at the same energy and shape. From a
-saddle the nudged run ends lower.
+diagonal. From a local minimum both runs end at the same energy and shape.
+From a saddle the nudged run ends lower. Passing does not make a result the
+lowest state: the stepped 180° twist passes, although the folded shapes of
+the single solves have far lower energy. Results that are not in the table
+(the long bar's twist, the other meshes of the triangulation experiment)
+were not checked this way.
 
 | result | energy | continued | nudged | nudged against continued | the two shapes are apart by |
 |---|---|---|---|---|---|
@@ -642,7 +663,7 @@ with no change in energy at this precision).
 - Positional constraints do not record how many turns a handle has made: a
   270° twist is solved as a 90° twist the other way, and 360° as no twist.
   Moving the handle in 10° steps keeps count, but on the default bar the
-  tube flattens past about 110°, its walls cross from 180° and it folds and
+  tube flattens past about 107°, its walls cross from 180° and it folds and
   later unwinds; a bar three times as long keeps a clean 270° twist.
 - The stopping rule cannot tell a minimum from a balanced state that is not
   one. A symmetric mesh and start can stay on such a state: the regular bar's
@@ -661,13 +682,14 @@ with no change in energy at this precision).
   *Visualization and Mathematics III*, Springer, 2003 (mixed Voronoi areas).
 - COMP 4900D course slides, Topic 7: Deformation.
 - [GeomProc](https://github.com/ovankaic/GeomProc) 1.9: mesh loading,
-  normalisation and saving, rotation helpers, sample meshes, and the reference
+  normalisation and saving, rotation helpers, the cylinder primitive
+  (`create_cylinder`) behind the bar meshes, sample meshes, and the reference
   `geometric_laplacian`.
 - [NumPy](https://numpy.org/): arrays and the batched SVD.
 - [SciPy](https://scipy.org/): sparse matrices and the sparse LU factorisation.
 - [Matplotlib](https://matplotlib.org/): figures.
 - [libigl](https://libigl.github.io/) Python bindings: an independent ARAP
   implementation used only for comparison, in the tests and in two experiment
-  columns (rest-pose drift with raw weights, and the libigl column of the
+  columns (rest-pose drift with raw weights, and the libigl row of the
   agreement table). The `arap/` package does not use it; without it the tests
   that need it are skipped and those columns are left empty.

@@ -67,7 +67,7 @@ def bar_ends(vertices):
     """Fixed and handle vertices of a bar along z: the slabs at its two ends.
 
     Each slab is 4.9% of the length, so that no ring of the meshes used here
-    (25 to 241 rings, also when jittered) sits on a threshold.
+    (25 to 241 rings, also with the 2% jitter of ``bar_twist``) sits on a threshold.
     """
     return (sel.by_coordinate(vertices, "z", below=0.049),
             sel.by_coordinate(vertices, "z", above=0.951))
@@ -78,7 +78,9 @@ def flip_diagonals(vertices, faces):
 
     Each side quad of ``bar`` is two triangles sharing a diagonal (an edge
     between two rings and two angles). Both triangles are replaced by the
-    two that share the other diagonal, with the same orientation.
+    two that share the other diagonal, with the same orientation. Only for
+    the regular ``bar``: diagonals are told apart by their end points lying
+    on different rings and at different angles, which jitter would blur.
     """
     V = np.asarray(vertices)
     F = np.array(faces, dtype=np.int64)
@@ -91,6 +93,8 @@ def flip_diagonals(vertices, faces):
             if not np.isclose(V[a, 2], V[b, 2]) and not np.isclose(
                     np.arctan2(V[a, 1], V[a, 0]), np.arctan2(V[b, 1], V[b, 0])):
                 owner.setdefault((min(a, b), max(a, b)), []).append((fi, k))
+    if 2 * len(owner) != side.size or any(len(pair) != 2 for pair in owner.values()):
+        raise ValueError("flip_diagonals expects a regular bar: one diagonal per side quad")
     G = F.copy()
     for pair in owner.values():
         (f1, k1), (f2, k2) = pair

@@ -4,7 +4,7 @@ Usage (from the repository root)::
 
     python -m experiments.run_all                 # everything
     python -m experiments.run_all --only bar_bend scaling
-    python -m experiments.run_all --update-docs   # also refresh docs/figures
+    python -m experiments.run_all --update-docs   # full run only; also refreshes docs/
 
 Each experiment writes into ``output/<experiment>/``. All numbers end up in
 ``output/metrics.json`` and the tables in ``output/summary.md``.

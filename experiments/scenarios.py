@@ -145,7 +145,8 @@ def bar_twist(angle=135.0, rings=41, sides=20, radius=0.1, jitter=0.02):
     unstable state. The side vertices are therefore moved very slightly
     (``jitter`` times the spacing, see ``irregular_bar``), which breaks the
     symmetry so the solver moves on to a minimum. ``jitter=0`` gives the
-    regular bar.
+    regular bar. Keep ``jitter`` below 0.04: beyond that a ring next to an
+    end slab can cross the slab's threshold and change the constrained set.
     """
     V, F = irregular_bar(rings, sides, radius, jitter=jitter) if jitter else bar(rings, sides, radius)
     fixed, handles = bar_ends(V)

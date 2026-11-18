@@ -10,8 +10,11 @@ zero. Free vertices satisfy
 with the cotangent operator ``Delta = M^{-1} (W - D) = -M^{-1} L`` and ``M``
 the diagonal of mixed areas. For the membrane system the per-row area
 factor cancels, so ``Delta d = 0`` is the same as ``L d = 0``, i.e.
-``L p' = L p``. That is naive Laplacian editing, the initial guess the ARAP
-paper uses in its Fig. 3.
+``L p' = L p`` on the free vertices. That is the course's basic Laplacian
+deformation. The ARAP paper's Fig. 3 starts from a different form of naive
+Laplacian editing: the least-squares minimiser of ``||L p' - L p||^2`` over
+all rows, which is the thin-plate system below without the area weights
+(and equal to it where the vertex areas are equal, as on a regular bar).
 
 Constraints are imposed by elimination: the constrained columns move to the
 right-hand side and the free block stays symmetric positive definite, so it

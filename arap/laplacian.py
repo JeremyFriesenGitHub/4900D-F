@@ -29,7 +29,10 @@ available through ``clamp``:
 ``"geomproc"``
     Reproduces GeomProc's ``mesh.geometric_laplacian``: a negative
     cotangent at a corner is replaced by half of the triangle area before
-    the two corners of an edge are added.
+    the two corners of an edge are added. An area takes the place of a
+    number without a unit, so this operator, like GeomProc's, changes with
+    the size of the mesh; it is meant for meshes normalised by
+    ``meshio.load_mesh`` and is only here to reproduce GeomProc's operator.
 """
 
 import numpy as np
@@ -82,7 +85,7 @@ def face_areas(vertices, faces):
 
 
 def edge_index_pairs(faces):
-    """Directed edges opposite each corner, as ``(I, J, corner)`` arrays.
+    """Directed edges opposite each corner, as ``(I, J)`` arrays.
 
     Corner ``k`` of face ``f`` is opposite the edge ``(I, J)`` with
     ``I = faces[f, (k+1) % 3]`` and ``J = faces[f, (k+2) % 3]``. The arrays are

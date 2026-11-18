@@ -147,9 +147,10 @@ class ARAPDeformer:
     def initial_guess(self, targets, method="laplacian"):
         """Starting positions for the iterations.
 
-        ``"laplacian"``  naive Laplacian editing, Delta d = 0 (course slides);
+        ``"laplacian"``  the course's Laplacian deformation, Delta d = 0;
                          identical to one global step with all R_i = I.
-        ``"thin_plate"`` Delta^2 d = 0 from the course slides.
+        ``"thin_plate"`` Delta^2 d = 0 from the course slides (close to the
+                         least-squares guess of the paper's Fig. 3).
         ``"rest"``       the rest pose with the constrained vertices moved.
         """
         constrained, targets = self._targets(targets)

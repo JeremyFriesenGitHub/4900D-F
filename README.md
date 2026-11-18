@@ -360,20 +360,21 @@ the triangulation experiment below shows the same.
 
 | vertices | setup (weights + factorisation) | local step | global step (sparse) | global step (dense, GeomProc operator) | building GeomProc's operator |
 |---|---|---|---|---|---|
-| 822 | 4 ms | 2.5 ms | 0.4 ms | 11 ms | 0.30 s |
-| 2 594 | 10 ms | 7.5 ms | 1.1 ms | 150 ms | 0.95 s |
-| 5 810 | 19 ms | 16 ms | 2.5 ms | 1 030 ms | 2.3 s |
-| 23 138 | 88 ms | 69 ms | 11 ms | not run | not run |
+| 822 | 4 ms | 2.4 ms | 0.4 ms | 11 ms | 0.28 s |
+| 2 594 | 9 ms | 7.9 ms | 1.1 ms | 180 ms | 0.94 s |
+| 5 810 | 18 ms | 17 ms | 2.6 ms | 1 230 ms | 2.4 s |
+| 23 138 | 90 ms | 67 ms | 12 ms | not run | not run |
 
 ![Dense against sparse solves](docs/figures/scaling_dense_vs_sparse.png)
 
 Times are for the bar bend on cylinders of increasing resolution. Each
 iteration is dominated by the local step (the covariances and the batched
-SVD). Because the factorisation is reused, the global step is six to seven
-times cheaper than the local step. It is also about 30 to 400 times cheaper
-than a dense `numpy.linalg.solve` on GeomProc's matrix, more so as the mesh
-grows (about 30 times at 822 vertices, 140 at 2 594 and 400 at 5 810, with
-NumPy's dense solve using all four cores). A full ARAP run on the
+SVD). Because the factorisation is reused, the global step is about six to
+seven times cheaper than the local step. It is also about 30 to 470 times
+cheaper than a dense `numpy.linalg.solve` on GeomProc's matrix, more so as the
+mesh grows (about 30 times at 822 vertices, 160 at 2 594 and 470 at 5 810,
+with NumPy's dense solve using all four cores; these ratios are timings and
+move by some tens of percent between runs). A full ARAP run on the
 10 000-vertex camel takes about 32 seconds, most of it in the final creeping
 iterations.
 
@@ -626,9 +627,8 @@ when the diagonals are flipped.
   negative weights left in, the result on this mesh is 0.35 % (RMS) and up to
   1.5 % from its mirror image, but that is one draw from a wide spread: over
   the 24 meshes it is 0.18 % to 1.48 % (RMS) and 0.52 % to 5.45 % at its worst
-  point. At its worst point the raw result is beyond the uniform one in about
-  two thirds of the draws, while in RMS it stays below the uniform result in
-  almost all of them. Measured against the 20 × 41 result with the
+  point. At its worst point the raw result is beyond the uniform one in 15 of
+  the 24 draws, while in RMS it stays below the uniform result in all but one. Measured against the 20 × 41 result with the
   same weights, as in the table in [docs/results.md](docs/results.md), the two
   weightings look about equally insensitive on the meshes that keep the even
   arc and have their diagonals the same way round as the reference (0.1 % to

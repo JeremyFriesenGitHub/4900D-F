@@ -28,7 +28,7 @@ import scipy.sparse as sp
 from scipy.sparse.csgraph import connected_components
 
 from . import laplacian as lap
-from .linear import ConstrainedSolver, LinearDeformer, _check_targets
+from .linear import ConstrainedSolver, LinearDeformer, _check_targets, as_indices
 from .rotations import fit_rotations
 
 
@@ -68,7 +68,7 @@ class ARAPDeformer:
         start = time.perf_counter()
         self.vertices = np.array(vertices, dtype=np.float64)
         self.faces = np.array(faces, dtype=np.int64)
-        self.constrained = np.asarray(constrained, dtype=np.int64).ravel()
+        self.constrained = as_indices(constrained)
         if np.unique(self.constrained).size != self.constrained.size:
             raise ValueError("constrained indices must be unique")
         self.weights = weights
@@ -206,6 +206,8 @@ class ARAPDeformer:
             current = np.array(init, dtype=np.float64)
             if current.shape != self.vertices.shape:
                 raise ValueError("explicit initial guess must have shape (n, 3)")
+            if not np.isfinite(current).all():
+                raise ValueError("explicit initial guess contains NaN or infinite values")
             current[constrained] = targets
         guess = current.copy()
         timings["initial_guess"] = time.perf_counter() - start

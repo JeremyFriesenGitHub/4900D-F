@@ -26,6 +26,21 @@ from scipy.sparse.csgraph import connected_components
 from . import laplacian as lap
 
 
+def as_indices(constrained):
+    """Constrained vertex indices as a flat int64 array.
+
+    Only integer indices are accepted: a boolean mask or float values would
+    otherwise be cast to indices without any warning.
+    """
+    c = np.asarray(constrained)
+    if c.size and not np.issubdtype(c.dtype, np.integer):
+        raise TypeError(
+            "constrained must hold integer vertex indices "
+            "(for a boolean mask pass np.flatnonzero(mask))"
+        )
+    return c.astype(np.int64).ravel()
+
+
 class ConstrainedSolver:
     """Factorised solver for ``K x = rhs`` with ``x[constrained]`` prescribed.
 
@@ -38,7 +53,7 @@ class ConstrainedSolver:
     def __init__(self, K, constrained):
         K = sp.csr_matrix(K)
         n = K.shape[0]
-        constrained = np.asarray(constrained, dtype=np.int64).ravel()
+        constrained = as_indices(constrained)
         if constrained.size == 0:
             raise ValueError("at least one constrained vertex is required")
         if constrained.min() < 0 or constrained.max() >= n:
@@ -88,7 +103,7 @@ class ConstrainedSolver:
 
 
 def _check_targets(vertices, constrained, targets):
-    constrained = np.asarray(constrained, dtype=np.int64)
+    constrained = as_indices(constrained)
     targets = np.asarray(targets, dtype=np.float64)
     if targets.shape != (constrained.size, 3):
         raise ValueError(
@@ -96,6 +111,8 @@ def _check_targets(vertices, constrained, targets):
         )
     if np.unique(constrained).size != constrained.size:
         raise ValueError("constrained indices must be unique")
+    if not np.isfinite(targets).all():
+        raise ValueError("targets contain NaN or infinite values")
     return constrained, targets
 
 
@@ -114,7 +131,7 @@ class LinearDeformer:
                  weights="cotangent", clamp="zero"):
         self.vertices = np.asarray(vertices, dtype=np.float64)
         self.faces = np.asarray(faces, dtype=np.int64)
-        self.constrained = np.asarray(constrained, dtype=np.int64)
+        self.constrained = as_indices(constrained)
         self.method = method
         L, _ = lap.mesh_laplacian(self.vertices, self.faces, weights=weights, clamp=clamp)
         if method == "laplacian":

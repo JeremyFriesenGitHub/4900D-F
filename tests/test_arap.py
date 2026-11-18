@@ -205,3 +205,63 @@ def test_unreferenced_vertex_is_reported(cube):
     V2 = np.vstack([V, [5.0, 5.0, 5.0]])
     with pytest.raises(ValueError, match="unreferenced"):
         ARAPDeformer(V2, F, [0])
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+@pytest.mark.parametrize("weights", ["cotangent", "uniform"])
+def test_non_finite_vertices_are_rejected(bar, bad, weights):
+    from arap.linear import LinearDeformer
+
+    V, F = bar
+    c, t = bar_bend(V)[:2]
+    for index in (c[0], np.setdiff1d(np.arange(len(V)), c)[0]):
+        broken = V.copy()
+        broken[index, 0] = bad
+        with pytest.raises(ValueError, match="vertices contain"):
+            ARAPDeformer(broken, F, c, weights=weights)
+        for method in ("laplacian", "thin_plate"):
+            with pytest.raises(ValueError, match="vertices contain"):
+                LinearDeformer(broken, F, c, method=method, weights=weights)
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_non_finite_targets_and_initial_guess_are_rejected(bar, bad):
+    from arap.linear import LinearDeformer
+
+    V, F = bar
+    c, t = bar_bend(V)[:2]
+    broken = t.copy()
+    broken[0, 0] = bad
+    d = ARAPDeformer(V, F, c)
+    with pytest.raises(ValueError, match="targets contain"):
+        d.deform(broken)
+    with pytest.raises(ValueError, match="targets contain"):
+        LinearDeformer(V, F, c).deform(broken)
+    guess = V.copy()
+    guess[np.setdiff1d(np.arange(len(V)), c)[0], 0] = bad
+    with pytest.raises(ValueError, match="initial guess contains"):
+        d.deform(t, init=guess)
+
+
+def test_constrained_must_be_integer_indices(bar):
+    from arap.linear import LinearDeformer
+
+    V, F = bar
+    c = bar_bend(V)[0]
+    mask = np.zeros(len(V), dtype=bool)
+    mask[c] = True
+    for bad in (mask, c.astype(float)):
+        with pytest.raises(TypeError, match="integer vertex indices"):
+            ARAPDeformer(V, F, bad)
+        with pytest.raises(TypeError, match="integer vertex indices"):
+            LinearDeformer(V, F, bad)
+    # A column of indices is flattened by both deformers.
+    column = c.reshape(-1, 1)
+    assert ARAPDeformer(V, F, column).constrained.shape == c.shape
+    assert LinearDeformer(V, F, column).constrained.shape == c.shape
+
+
+def test_unknown_clamp_is_rejected_for_uniform_weights_too(bar):
+    V, F = bar
+    with pytest.raises(ValueError, match="clamp must be one of"):
+        ARAPDeformer(V, F, bar_bend(V)[0], weights="uniform", clamp="bogus")

@@ -41,11 +41,32 @@ NUDGE_RULE = dict(max_iterations=5000, energy_tol=1e-10, step_tol=1e-8)
 
 # ---------------------------------------------------------------- helpers
 def stripe_colors(vertices, bands=8):
-    """Alternating colours by angle around the z axis, so twists are visible."""
+    """Alternating colours by angle around the z axis, per vertex (kept for saved meshes)."""
     angle = np.arctan2(vertices[:, 1], vertices[:, 0])
     band = np.floor((angle + np.pi) / (2 * np.pi) * bands).astype(int) % 2
     light, dark = np.array([0.80, 0.84, 0.92]), np.array([0.25, 0.38, 0.62])
     return np.where(band[:, None] == 1, dark, light)
+
+
+def stripe_face_colors(vertices, faces, vertex_colors, constrained, bands=10):
+    """Per-face colours of a bar along z: stripes by angle, so twists are visible.
+
+    A face whose three corners are all constrained keeps the constraint
+    colour; every other face is light or dark by the angle of its centre in
+    the rest pose. ``bands`` must divide the number of sides of the bar, so
+    that every stripe edge runs along a column of vertices: stripes set per
+    vertex put some columns exactly on an edge, and the jitter of
+    ``bar_twist`` then makes them ragged.
+    """
+    V, F = np.asarray(vertices), np.asarray(faces)
+    centre = V[F].mean(axis=1)
+    angle = np.arctan2(centre[:, 1], centre[:, 0])
+    band = np.floor((angle + np.pi) / (2 * np.pi) * bands).astype(int) % 2
+    light, dark = np.array([0.80, 0.84, 0.92]), np.array([0.25, 0.38, 0.62])
+    out = np.where(band[:, None] == 1, dark, light)
+    held = np.isin(F, constrained).all(axis=1)
+    out[held] = np.asarray(vertex_colors)[F[held]].mean(axis=1)
+    return out
 
 
 def stretch_colors(rest, deformed, faces, vmax=0.3):
@@ -280,15 +301,19 @@ def showcase(out, scenario_name):
     snaps = (0, 1, 2, 4, 10) if scenario_name == "bar_bend" else ()
     result = d.deform(t, max_iterations=MAX_ITERATIONS, snapshot_iterations=snaps + (100,))
     colors = constraint_colors(V.shape[0], sc.fixed, sc.handles)
+    stripes = None
     if scenario_name == "bar_twist":
-        # Stripes make the twist visible; constrained vertices keep their colour.
+        # Stripes make the twist visible; constrained parts keep their colour.
+        # The figure is striped per face, the saved meshes per vertex.
+        stripes = stripe_face_colors(V, F, colors, c)
         free = np.setdiff1d(np.arange(V.shape[0]), c)
         colors[free] = stripe_colors(V)[free]
     folder = os.path.join(out, scenario_name)
     render_panels(
-        [dict(vertices=V, faces=F, colors=colors, title="rest pose"),
-         dict(vertices=result.initial_guess, faces=F, colors=colors, title="Laplacian editing"),
-         dict(vertices=result.vertices, faces=F, colors=colors,
+        [dict(vertices=V, faces=F, colors=colors, face_colors=stripes, title="rest pose"),
+         dict(vertices=result.initial_guess, faces=F, colors=colors, face_colors=stripes,
+              title="Laplacian editing"),
+         dict(vertices=result.vertices, faces=F, colors=colors, face_colors=stripes,
               title=f"ARAP ({result.iterations} it.)")],
         os.path.join(folder, "comparison.png"), view=sc.view, vertical_axis=sc.up,
     )
@@ -560,9 +585,7 @@ def large_rotations(out):
         c, _ = sc.constraints
         d = ARAPDeformer(V, F, c)
         colors = constraint_colors(V.shape[0], sc.fixed, sc.handles)
-        if kind == "twist":
-            free = np.setdiff1d(np.arange(V.shape[0]), c)
-            colors[free] = stripe_colors(V)[free]
+        stripes = stripe_face_colors(V, F, colors, c) if kind == "twist" else None
         # One stepped run up to the largest angle passes through the smaller ones.
         steps, trace, previous = {}, [], 0
         for a, r, total in stepped(d, targets_at, range(step, max(angles) + 1, step), **rule):
@@ -591,12 +614,12 @@ def large_rotations(out):
             rows[kind][str(angle)] = row
             if (kind, angle) in (("bend", 270), ("twist", 180), ("twist", 270)):
                 panels = [dict(vertices=results["laplacian"][0].initial_guess, faces=F,
-                               colors=colors, title="Laplacian editing")]
+                               colors=colors, face_colors=stripes, title="Laplacian editing")]
                 for how, label in (("laplacian", "ARAP, Laplacian start"),
                                    ("thin_plate", "ARAP, thin-plate start"),
                                    ("steps", f"ARAP, {step}-degree steps")):
                     panels.append(dict(vertices=results[how][0].vertices, faces=F,
-                                       colors=colors, title=label))
+                                       colors=colors, face_colors=stripes, title=label))
                 render_panels(panels, os.path.join(out, "large_rotations", f"{kind}_{angle}.png"),
                               view=sc.view, vertical_axis=sc.up,
                               title=f"{kind} by {angle} degrees")
@@ -639,8 +662,7 @@ def long_twist(out):
     c, _ = sel.combine(V, fixed, handles, V[handles])
     d = ARAPDeformer(V, F, c)
     colors = constraint_colors(V.shape[0], fixed, handles)
-    free = np.setdiff1d(np.arange(V.shape[0]), c)
-    colors[free] = stripe_colors(V)[free]
+    stripes = stripe_face_colors(V, F, colors, c)
     trace, panels, previous = [], [], 0
     for a, r, total in stepped(d, targets_at, range(step, 271, step), **LARGE_ROTATION_RULE):
         trace.append((a, twist_angle(V, r.vertices), narrowest_ring(V, r.vertices),
@@ -648,7 +670,8 @@ def long_twist(out):
                       r.converged))
         previous = total
         if a in (90, 180, 270):
-            panels.append(dict(vertices=r.vertices, faces=F, colors=colors, title=f"{a} degrees"))
+            panels.append(dict(vertices=r.vertices, faces=F, colors=colors, face_colors=stripes,
+                               title=f"{a} degrees"))
     render_panels(panels, os.path.join(out, "long_twist", "steps.png"), view=(15, -60),
                   title=f"bar of length {length:g} twisted in {step}-degree steps")
     keys = ("handle", "reached", "narrowest_ring", "self_intersections", "energy",

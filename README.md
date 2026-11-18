@@ -64,7 +64,7 @@ python -m pytest
 `output/` receives, for every scenario, the rest pose, the Laplacian editing
 result and the ARAP result as OBJ files with the constrained vertices coloured
 (fixed red, handles yellow) for viewing in MeshLab, plus the figures, the
-energy curve, `metrics.json` and `summary.md`. A full run takes about 25
+energy curve, `metrics.json` and `summary.md`. A full run takes about 31
 minutes, most of it in the large rotations, the long twist and the stability
 check.
 
@@ -197,7 +197,7 @@ system symmetric positive definite.
 
 ## Results
 
-All numbers come from one run of `python -m experiments.run_all` (about 25
+All numbers come from one run of `python -m experiments.run_all` (about 31
 minutes), except a few that needed longer or different solves and are marked
 "separate run" where they appear: how far each result still moves when it is
 iterated to the limit, the paper's own initial guess on the bar, the size of
@@ -695,35 +695,55 @@ and after every free vertex has been moved at random by up to 0.1 % of the
 diagonal. From a local minimum both runs end at the same energy and shape.
 From a saddle the nudged run ends lower. Passing does not make a result the
 lowest state: the stepped 180° twist passes, although the folded shapes of
-the single solves have far lower energy. Results that are not in the table
-(the long bar's twist, the other meshes of the triangulation experiment)
-were not checked this way.
+the single solves have far lower energy. "Moved on" is how far the continued
+run ends from the result it started from, so it shows how far short of its
+minimum the result had stopped. The last two columns are the edge error and
+the volume change of the result itself.
 
-| result | energy | continued | nudged | nudged against continued | the two shapes are apart by |
-|---|---|---|---|---|---|
-| bar twist 100°, regular bar | 0.019603 | 0.019603 | 0.019603 | +0.000 % | 0.00 % |
-| bar twist 105°, regular bar | 0.021564 | 0.021564 | 0.021564 | +0.000 % | 0.00 % |
-| bar twist 110°, regular bar | 0.023611 | 0.023611 | 0.023592 | **−0.081 %** | **1.14 %** |
-| bar twist 135°, regular bar | 0.035097 | 0.035097 | 0.033830 | **−3.610 %** | **4.01 %** |
-| bar twist 135°, jittered bar (the scenario) | 0.034175 | 0.034173 | 0.034173 | −0.000 % | 0.00 % |
-| bar bend 90° | 0.015611 | 0.015611 | 0.015611 | +0.000 % | 0.00 % |
-| bend 270°, Laplacian start (passes through itself) | 0.049544 | 0.049544 | 0.049544 | −0.000 % | 0.00 % |
-| bend 270°, 10° steps | 0.014873 | 0.014873 | 0.014873 | −0.000 % | 0.00 % |
-| twist 180°, 10° steps | 0.051647 | 0.051647 | 0.051647 | −0.000 % | 0.00 % |
-| bend 90°, one handle vertex | 0.011314 | 0.011314 | 0.011314 | +0.000 % | 0.00 % |
-| bend 90°, 32 × 81, end caps only | 0.011338 | 0.011331 | 0.011331 | −0.000 % | 0.00 % |
+| result | energy | continued | nudged | nudged against continued | the two shapes are apart by | moved on | edge error | volume change |
+|---|---|---|---|---|---|---|---|---|
+| bar twist 100°, regular bar | 0.019603 | 0.019603 | 0.019603 | +0.000 % | 0.00 % | 0.02 % | 0.0548 | −3.4 % |
+| bar twist 105°, regular bar | 0.021564 | 0.021564 | 0.021564 | +0.000 % | 0.00 % | 0.02 % | 0.0579 | −3.7 % |
+| bar twist 106°, regular bar | 0.021966 | 0.021966 | 0.021966 | +0.000 % | 0.00 % | 0.02 % | 0.0585 | −3.8 % |
+| bar twist 108°, regular bar | 0.022782 | 0.022782 | 0.022778 | **−0.016 %** | **0.72 %** | 0.02 % | 0.0597 | −4.0 % |
+| bar twist 110°, regular bar | 0.023611 | 0.023611 | 0.023592 | **−0.081 %** | **1.14 %** | 0.02 % | 0.0609 | −4.1 % |
+| bar twist 135°, regular bar | 0.035097 | 0.035097 | 0.033830 | **−3.610 %** | **3.98 %** | 0.02 % | 0.0764 | −6.1 % |
+| bar twist 135°, jittered bar (the scenario) | 0.034175 | 0.034173 | 0.034173 | +0.000 % | 0.00 % | 0.54 % | 0.0668 | −11.5 % |
+| bar bend 90° | 0.015611 | 0.015611 | 0.015611 | +0.000 % | 0.00 % | 0.03 % | 0.0650 | −2.6 % |
+| bend 270°, Laplacian start (passes through itself) | 0.049544 | 0.049544 | 0.049544 | +0.000 % | 0.00 % | 0.01 % | 0.0631 | −108.1 % |
+| bend 270°, 10° steps | 0.014873 | 0.014873 | 0.014873 | +0.000 % | 0.00 % | 0.20 % | 0.0698 | −14.1 % |
+| twist 180°, 10° steps | 0.051647 | 0.051647 | 0.051647 | −0.000 % | 0.00 % | 0.21 % | 0.0788 | −23.3 % |
+| bend 90°, one handle vertex | 0.011314 | 0.011314 | 0.011314 | +0.000 % | 0.00 % | 0.15 % | 0.0480 | −5.2 % |
+| bend 90°, 32 × 81, end caps only | 0.011338 | 0.011331 | 0.011331 | −0.000 % | 0.00 % | 1.13 % | 0.0442 | −8.8 % |
+| bend 90°, 20 × 41, end caps only | 0.014823 | 0.014823 | 0.014823 | −0.000 % | 0.00 % | 0.03 % | 0.0635 | −2.9 % |
+| bend 90°, 16 × 81, end caps only | 0.014706 | 0.014704 | 0.014704 | −0.000 % | 0.00 % | 0.28 % | 0.0613 | −2.5 % |
+| bend 90°, 32 × 81, end caps only, uniform weights | 0.014448 | 0.014447 | 0.014447 | +0.000 % | 0.00 % | 0.04 % | 0.0615 | −1.1 % |
 
-On the regular bar the even twist is a minimum at 105° but not at 110°. At
-135° the tight rule alone changes nothing: the continued run stays on the even
-twist at 0.0351, while the nudged run drops 3.6 % to 0.0338 and ends 4 % of
-the diagonal away. So a tighter tolerance would not have caught this; the
-symmetry has to be broken, which is why the twist scenario jitters the bar.
+On the regular bar the even twist is a minimum at 106° but not at 108°. At
+108° the nudged run was still moving when it reached the 5 000-iteration
+limit, so its −0.016 % and 0.72 % are lower bounds. At 135° the tight rule
+alone changes nothing: the continued run stays on the even twist at 0.0351,
+while the nudged run drops 3.6 % to 0.0338 and ends 4 % of the diagonal away.
+So a tighter tolerance would not have caught this; the symmetry has to be
+broken, which is why the twist scenario jitters the bar.
+
 Every other result passes: nudged or not, it ends at the same energy and
-shape. Two had not finished converging and move on the same way in both runs:
-the 32 × 81 bend, which had stopped at the 1 000-iteration limit, and, very
-slightly, the jittered 135° twist, which is still creeping at the end of both
-5 000-iteration runs (as are the 270° stepped bend and the 180° stepped twist,
-with no change in energy at this precision).
+shape. That covers the two kinds of result in the triangulation experiment,
+the even arc (20 × 41 and 16 × 81 with cotangent weights, 32 × 81 with uniform
+weights) and the crease (32 × 81 with cotangent weights), and the long bar's
+270° twist, which `long_twist` puts through the same test (energy 0.046254 in
+both runs, the two shapes 0.00 % apart). The other meshes of the triangulation
+experiment were not checked in this run; in a separate run each of them was at
+a minimum except the uniform 32 × 41 bend described above.
+
+Several results had stopped short of their minimum and move on the same way in
+both runs: the 32 × 81 bend, which had stopped at the 1 000-iteration limit,
+by 1.1 % of the diagonal, the 16 × 81 bend by 0.28 % and the one-vertex bend
+by 0.15 %. Three are still creeping at the end of both 5 000-iteration runs:
+the jittered 135° twist, whose energy barely changes but whose shape moves
+another 0.5 %, the 270° stepped bend and the 180° stepped twist (0.2 % each).
+For those three, two runs that agree without having converged only show that
+they creep the same way.
 
 ### Limitations
 

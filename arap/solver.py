@@ -172,7 +172,7 @@ class ARAPDeformer:
         return _check_targets(self.vertices, self.constrained, targets)
 
     # ------------------------------------------------------------- iteration
-    def deform(self, targets, init="laplacian", max_iterations=500,
+    def deform(self, targets, init="laplacian", max_iterations=1000,
                energy_tol=1e-6, step_tol=1e-5, snapshot_iterations=()):
         """Run the local/global iterations until convergence.
 

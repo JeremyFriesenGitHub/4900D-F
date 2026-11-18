@@ -139,7 +139,7 @@ def bar_twist(angle=135.0, rings=41, sides=20, radius=0.1, jitter=0.02):
 
     The bar, its constraints and the Laplacian-editing guess are all
     symmetric under turning about the axis by one side, and each iteration
-    keeps that symmetry. Past about 107 degrees on the default bar the evenly
+    keeps that symmetry. Past about 106 degrees on the default bar the evenly
     twisted shape is no longer a minimum but the solver can stay on it, since
     nothing pushes it off; the stopping rule then fires on a balanced but
     unstable state. The side vertices are therefore moved very slightly

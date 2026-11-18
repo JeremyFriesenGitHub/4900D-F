@@ -52,6 +52,11 @@ def test_self_intersections():
     P = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0],
                   [0.5, 0.5, -1.0], [0.5, 0.5, 1.0], [3.0, 3.0, 0.0]])
     assert metrics.self_intersections(P, np.array([[0, 1, 2], [3, 4, 5]])) == 2
+    # The count does not depend on the unit of length.
+    both = np.vstack([F, F + n])
+    count = metrics.self_intersections(crossed, both)
+    assert metrics.self_intersections(1e-5 * crossed, both) == count
+    assert metrics.self_intersections(1e5 * crossed, both) == count
 
 
 def test_edge_length_error_of_known_stretches():

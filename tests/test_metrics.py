@@ -52,3 +52,46 @@ def test_self_intersections():
     P = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0],
                   [0.5, 0.5, -1.0], [0.5, 0.5, 1.0], [3.0, 3.0, 0.0]])
     assert metrics.self_intersections(P, np.array([[0, 1, 2], [3, 4, 5]])) == 2
+
+
+def test_edge_length_error_of_known_stretches():
+    V = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    F = np.array([[0, 1, 2]])
+    e = metrics.edge_length_error(V, 1.5 * V, F)  # every edge 50 % longer
+    assert np.allclose([e["rms_relative"], e["mean_abs_relative"], e["max_abs_relative"]], 0.5)
+    stretched = V * [2.0, 1.0, 1.0]  # edges 2, 2, sqrt(8) become 4, 2, sqrt(20)
+    rel = np.array([1.0, 0.0, np.sqrt(20.0) / np.sqrt(8.0) - 1.0])
+    e = metrics.edge_length_error(V, stretched, F)
+    assert np.isclose(e["rms_relative"], np.sqrt(np.mean(rel ** 2)))
+    assert np.isclose(e["mean_abs_relative"], rel.mean())
+    assert np.isclose(e["max_abs_relative"], 1.0)
+    e = metrics.edge_length_error(V, 0.5 * V, F)  # shortening counts as much as stretching
+    assert np.allclose([e["rms_relative"], e["mean_abs_relative"], e["max_abs_relative"]], 0.5)
+
+
+def test_per_vertex_stretch_counts_shortening_as_stretch():
+    V = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    F = np.array([[0, 1, 2]])
+    moved = V.copy()
+    moved[1, 0], moved[2, 1] = 3.0, 1.0  # one edge at vertex 0 grows by half, the other halves
+    assert np.isclose(metrics.per_vertex_stretch(V, moved, F)[0], 0.5)
+
+
+def test_self_intersections_ignores_an_edge_that_stops_short_of_a_triangle():
+    # The edge's line goes through the triangle, but the edge ends before it.
+    P = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 2.0],
+                  [0.5, 0.2, 1.0], [0.5, 0.2, 0.6], [5.0, 5.0, 5.0]])
+    F = np.array([[0, 1, 2], [3, 4, 5]])
+    assert metrics.self_intersections(P, F) == 0
+    P[4] = [0.5, 0.2, -0.5]  # now the edge goes through
+    assert metrics.self_intersections(P, F) >= 1
+
+
+def test_load_mesh_normalises_the_longest_side_to_two():
+    from arap.meshio import load_mesh
+    from conftest import mesh_path
+
+    V, _ = load_mesh(mesh_path("bunny.obj"))
+    assert np.isclose(np.max(V.max(axis=0) - V.min(axis=0)), 2.0)
+    raw, _ = load_mesh(mesh_path("bunny.obj"), normalize=False)
+    assert not np.isclose(np.max(raw.max(axis=0) - raw.min(axis=0)), 2.0)

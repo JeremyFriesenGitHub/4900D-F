@@ -56,8 +56,10 @@ def bar_bend(vertices, angle_degrees=90.0):
     from arap import selection
 
     V = np.asarray(vertices)
-    fixed = selection.by_coordinate(V, "z", below=0.05)
-    handles = selection.by_coordinate(V, "z", above=0.95)
+    # 4.9 % slabs, as in experiments.scenarios.bar_ends: with 5 % a ring of the
+    # 21-ring bar sits exactly on each threshold.
+    fixed = selection.by_coordinate(V, "z", below=0.049)
+    handles = selection.by_coordinate(V, "z", above=0.951)
     z0, z1 = V[:, 2].min(), V[:, 2].max()
     length = z1 - z0
     theta = np.radians(angle_degrees)

@@ -122,7 +122,7 @@ guess shown in the paper's Fig. 3: the paper's naive Laplacian editing
 minimises `||L p' - L p||²` over all rows with the constrained positions
 substituted, a least-squares (bi-Laplacian) solve that bends the bar smoothly,
 while the square solve used here shears it in a straight line (for the 90°
-bend the two guesses are 16 % of the diagonal apart). The thin-plate version
+bend the two guesses are 16 % of the diagonal apart; separate run). The thin-plate version
 from the slides, `Δ²d = 0` (solved as `L M^{-1} L d = 0`), is available as an
 alternative; on the regular bar as constrained here it coincides with the
 paper's guess.
@@ -248,7 +248,8 @@ ARAP result:
 
 Two of the six ARAP results pass through themselves. The hinge's top block
 dips into the base, because the scenario asks for it: turned rigidly, the two
-halves already touch at a turn of about 40°, and the handle is turned by 60°. The
+halves already touch at a turn of about 40° (separate run), and the handle is
+turned by 60°. The
 camel's front legs, which touch at the knees in the scan, pass through each
 other. Nothing in ARAP prevents this (see Limitations). For these two rows the
 volume change is that of the signed volume, which counts the overlap twice;
@@ -369,8 +370,8 @@ the triangulation experiment below shows the same.
 
 Times are for the bar bend on cylinders of increasing resolution. Each
 iteration is dominated by the local step (the covariances and the batched
-SVD). Because the factorisation is reused, the global step is about six to
-seven times cheaper than the local step. It is also about 30 to 470 times
+SVD). Because the factorisation is reused, the global step is 5.6 to 7 times
+cheaper than the local step. It is also about 30 to 470 times
 cheaper than a dense `numpy.linalg.solve` on GeomProc's matrix, more so as the
 mesh grows (about 30 times at 822 vertices, 160 at 2 594 and 470 at 5 810,
 with NumPy's dense solve using all four cores; these ratios are timings and
@@ -768,14 +769,14 @@ they creep the same way.
   135° twist did, until the bar was jittered. The stability check above
   catches this, but it is a separate experiment, not part of the solver.
 - Clamping negative weights changes the operator on meshes with obtuse
-  triangles (`p^T L p` of the rest shape grows by 4 % to 20 % on the three
-  scans). An intrinsic Delaunay Laplacian changes it by under 0.2 % and has no
+  triangles. The numbers in this item come from a separate run: `p^T L p` of
+  the rest shape grows by 4 % to 20 % on the three scans. An intrinsic Delaunay Laplacian changes it by under 0.2 % and has no
   negative weights on closed meshes. Boundary edges cannot be flipped, so 20
   of the open bunny's 42 boundary edges stay negative; they do no harm while
   the boundary is held fixed, as in every bunny run here, but with the
   boundary free the rest pose drifts by about 30 % of the diagonal in 50
   iterations, so the clamp is still needed in general. In a trial with such
-  an operator (separate run) the results changed little (edge error 0.036 / 0.041 / 0.016 against 0.036 / 0.041 / 0.017 for
+  an operator the results changed little (edge error 0.036 / 0.041 / 0.016 against 0.036 / 0.041 / 0.017 for
   bunny / kid / camel, shapes within 0.8 % of the diagonal), so it is not part
   of this project.
 
@@ -795,7 +796,7 @@ they creep the same way.
 - [SciPy](https://scipy.org/): sparse matrices and the sparse LU factorisation.
 - [Matplotlib](https://matplotlib.org/): figures.
 - [libigl](https://libigl.github.io/) Python bindings: an independent ARAP
-  implementation used only for comparison, in the tests and in two experiment
-  columns (rest-pose drift with raw weights, and the libigl row of the
+  implementation used only for comparison, in the tests and in three experiment
+  columns (rest-pose drift with raw weights, and the two libigl rows of the
   agreement table). The `arap/` package does not use it; without it the tests
   that need it are skipped and those columns are left empty.

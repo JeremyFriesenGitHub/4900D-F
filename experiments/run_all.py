@@ -22,8 +22,8 @@ from arap import laplacian as lap
 from arap import reference
 from arap import selection as sel
 from arap.meshio import constraint_colors, load_mesh, save_mesh
-from arap.metrics import (area_volume_change, edge_length_error, per_vertex_stretch,
-                          self_intersections)
+from arap.metrics import (area_volume_change, edge_length_error, edge_lengths,
+                          per_vertex_stretch, self_intersections, unique_edges)
 from arap.solver import ARAPDeformer
 from arap.viz import plot_energy, plot_lines, plot_scaling, render_panels
 
@@ -37,6 +37,8 @@ MAX_ITERATIONS = 1000
 LARGE_ROTATION_RULE = dict(max_iterations=10000, energy_tol=1e-8, step_tol=1e-6)
 # Stopping rule for the stability check: much tighter than the default.
 NUDGE_RULE = dict(max_iterations=5000, energy_tol=1e-10, step_tol=1e-8)
+# Number of random draws of the irregular bar in the triangulation experiment.
+IRREGULAR_SEEDS = 24
 
 
 # ---------------------------------------------------------------- helpers
@@ -76,9 +78,14 @@ def stretch_colors(rest, deformed, faces, vmax=0.3):
 
 
 def iterations_to_within(energies, fraction=0.01):
-    """First iteration whose energy is at most ``(1 + fraction)`` times the final value."""
+    """First iteration whose energy is at most ``fraction * |final|`` above the final value.
+
+    The margin uses the absolute value so that a negative final energy (raw
+    cotangent weights) is handled too: ``(1 + fraction) * E[-1]`` would then
+    lie below the final value and no iteration would pass.
+    """
     E = np.asarray(energies)
-    return int(np.argmax(E <= (1.0 + fraction) * E[-1]))
+    return int(np.argmax(E - E[-1] <= fraction * abs(E[-1])))
 
 
 def optional_igl():
@@ -130,7 +137,7 @@ def twist_angle(rest, deformed, min_coherence=0.5):
     turned about the ring's centroid; the ring angles are unwrapped from the
     bottom up, so a twist past 180 degrees is followed as long as
     neighbouring rings differ by less than 180 degrees. When a ring is
-    pinched or folded onto itself, its vertices' turn angles no longer agree
+    turned inside out or wound onto itself, its vertices' turn angles no longer agree
     (the length of their mean unit vector drops below ``min_coherence``), the
     ring has no angle, and the twist is undefined: NaN is returned. NaN is
     also returned when two neighbouring rings differ by more than 90 degrees,
@@ -195,7 +202,10 @@ def rotation_angle(rest_points, deformed_points):
     if np.linalg.det(R) < 0:
         Vt[-1] *= -1
         R = Vt.T @ U.T
-    return float(np.degrees(np.arccos(np.clip(0.5 * (np.trace(R) - 1.0), -1.0, 1.0))))
+    # arctan2 of sine and cosine keeps full precision near 0 and 180 degrees,
+    # where arccos of the trace loses half the digits.
+    sine = 0.5 * np.linalg.norm([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+    return float(np.degrees(np.arctan2(sine, 0.5 * (np.trace(R) - 1.0))))
 
 
 def stepped(deformer, targets_at, angles, **rule):
@@ -248,8 +258,13 @@ def bar_surface_points(rest, faces, deformed, samples):
 
 def summarize(result, rest, faces):
     E = np.asarray(result.energies)
+    # A rise counts when it exceeds rounding: 1e-12 of the starting energy. When
+    # the target is the rest pose the energies are themselves rounding noise
+    # (about 1e-29), so the tolerance also gets a floor that scales with the
+    # mesh: 1e-20 of the summed squared edge lengths.
+    floor = 1e-20 * float(np.sum(edge_lengths(rest, unique_edges(faces)) ** 2))
     return {
-        "energy_monotone": bool(np.all(np.diff(E) <= 1e-12 * abs(E[0]))),
+        "energy_monotone": bool(np.all(np.diff(E) <= 1e-12 * abs(E[0]) + floor)),
         "iterations": result.iterations,
         "converged": result.converged,
         "iterations_to_1pct": iterations_to_within(result.energies),
@@ -280,7 +295,10 @@ def twist_cell(row, key="twist_achieved"):
 
 def pct(x):
     """A relative change as a signed percentage, or "-" when undefined."""
-    return "-" if x is None else f"{100 * x:+.1f}%"
+    if x is None:
+        return "-"
+    value = round(100 * x, 1)
+    return "0.0%" if value == 0 else f"{value:+.1f}%"
 
 
 def fmt(x, digits=3):
@@ -288,6 +306,8 @@ def fmt(x, digits=3):
         return "yes" if x else "no"
     if isinstance(x, (int, np.integer)):
         return str(int(x))
+    if 1000 <= abs(x) < 1e15:
+        return f"{x:.0f}"  # "%g" would print 1030 as 1.03e+03
     return f"{x:.{digits}g}"
 
 
@@ -341,10 +361,28 @@ def showcase(out, scenario_name):
     metrics = summarize(result, V, F)
     metrics.update(vertices=int(V.shape[0]), faces=int(F.shape[0]), constrained=int(c.size),
                    setup=d.timings, description=sc.description)
+    # Where a shape passes through itself its volume change is that of the
+    # signed volume, which counts the overlap twice. The Laplacian-editing
+    # result is not counted: on the regular bars its crossings land exactly on
+    # mesh edges, which the counter cannot see (see ``self_intersections``).
+    metrics["self_intersections"] = {"rest": self_intersections(V, F),
+                                     "arap": self_intersections(result.vertices, F)}
     # How much the shape still changes after the first hundred iterations.
     if 100 in result.snapshots:
         metrics["moved_after_iteration_100"] = float(
             np.max(np.linalg.norm(result.vertices - result.snapshots[100], axis=1)) / d.diagonal)
+    if scenario_name in ("bar_bend", "bar_twist"):
+        # Where the lost volume goes: volume = length of the centre line times
+        # the mean cross-section along it.
+        def centre_line(X):
+            centres = np.array([X[ring].mean(axis=0) for ring in side_rings(V)])
+            return float(np.linalg.norm(np.diff(centres, axis=0), axis=1).sum())
+        length = centre_line(result.vertices) / centre_line(V) - 1.0
+        metrics["centre_line_change"] = length
+        metrics["mean_cross_section_change"] = (
+            (1.0 + metrics["shape_change_final"]["volume_change"]) / (1.0 + length) - 1.0)
+        if scenario_name == "bar_twist":
+            metrics["narrowest_ring"] = narrowest_ring(V, result.vertices)
     if scenario_name == "hinge":
         # The top block should end up as a rigid copy of itself.
         # Faces of the top block, without those inside the handle (which the
@@ -553,6 +591,20 @@ def geomproc_consistency(out):
             igl.arap_precomputation(V, F, 3, c.astype(np.int32), data)
             theirs = igl.arap_solve(t, data, g.copy())
             row["libigl_ten_iterations_raw_weights"] = dist(ours, theirs)
+
+            def igl_fit(covariances):
+                # The fit that igl::arap_solve uses: a fast single-precision
+                # SVD of the covariances scaled by their largest entry.
+                n = covariances.shape[0]
+                stack = np.ascontiguousarray(np.transpose(
+                    covariances / np.abs(covariances).max(), (1, 0, 2)).reshape(3 * n, 3))
+                return np.ascontiguousarray(
+                    igl.fit_rotations(stack, True).reshape(3, n, 3).transpose(1, 0, 2))
+
+            Y = g.copy()
+            for _ in range(10):
+                Y = raw.global_step(igl_fit(raw.covariances(Y)), t)
+            row["libigl_ten_iterations_with_libigl_fit"] = dist(Y, theirs)
         rows[name] = row
     return rows
 
@@ -605,7 +657,13 @@ def large_rotations(out):
             for how, (r, total) in results.items():
                 m = summarize(r, V, F)
                 if total is not None:
+                    # A stepped row is about the whole sequence of solves: the
+                    # iterations are the total, and the fields that describe
+                    # only the last 10-degree solve's start are left out.
                     m["iterations"] = total
+                    for key in ("iterations_to_1pct", "energy_initial", "edge_error_initial",
+                                "shape_change_initial"):
+                        del m[key]
                 m["self_intersections"] = self_intersections(r.vertices, F)
                 if kind == "twist":
                     m["twist_achieved"] = twist_angle(V, r.vertices)
@@ -663,12 +721,12 @@ def long_twist(out):
     d = ARAPDeformer(V, F, c)
     colors = constraint_colors(V.shape[0], fixed, handles)
     stripes = stripe_face_colors(V, F, colors, c)
-    trace, panels, previous = [], [], 0
+    trace, panels, previous, final = [], [], 0, None
     for a, r, total in stepped(d, targets_at, range(step, 271, step), **LARGE_ROTATION_RULE):
         trace.append((a, twist_angle(V, r.vertices), narrowest_ring(V, r.vertices),
                       self_intersections(r.vertices, F), r.energies[-1], total - previous,
                       r.converged))
-        previous = total
+        previous, final = total, (a, r)
         if a in (90, 180, 270):
             panels.append(dict(vertices=r.vertices, faces=F, colors=colors, face_colors=stripes,
                                title=f"{a} degrees"))
@@ -676,7 +734,9 @@ def long_twist(out):
                   title=f"bar of length {length:g} twisted in {step}-degree steps")
     keys = ("handle", "reached", "narrowest_ring", "self_intersections", "energy",
             "iterations", "converged")
-    return {"vertices": int(V.shape[0]), "constrained": int(c.size),
+    # Is the final 270-degree twist a minimum? (the test of ``stability``)
+    check = nudge_check(d, targets_at(final[0]), final[1], np.random.default_rng(5))
+    return {"vertices": int(V.shape[0]), "constrained": int(c.size), "stability": check,
             **{k: [to_builtin(row[i]) for row in trace] for i, k in enumerate(keys)}}
 
 
@@ -804,10 +864,29 @@ def triangulation(out):
     raw = summarize(r, V, F)
     raw.update(asymmetry(V, F, r.vertices, d.diagonal), edges=int(w_raw.size),
                negative_weight_edges=int(np.count_nonzero(w_raw < 0.0)))
+    # The irregular mesh is one random draw. The same three solves on other
+    # draws show how much each number depends on it.
+    variants = {"cotangent": dict(weights="cotangent"), "uniform": dict(weights="uniform"),
+                "cotangent, raw": dict(weights="cotangent", clamp="none")}
+    seeds = {label: {"mirror_asymmetry_rms": [], "mirror_asymmetry_max": [], "converged": []}
+             for label in variants}
+    for seed in range(IRREGULAR_SEEDS):
+        V, F = S.irregular_bar(rings=41, sides=20, seed=seed)
+        fixed = np.flatnonzero(V[:, 2] <= V[:, 2].min() + 1e-9)
+        handles = np.flatnonzero(V[:, 2] >= V[:, 2].max() - 1e-9)
+        c, t = sel.combine(V, fixed, handles, S.bend_targets(V, handles, 90.0))
+        for label, options in variants.items():
+            d = ARAPDeformer(V, F, c, **options)
+            r = d.deform(t, max_iterations=MAX_ITERATIONS)
+            for key, value in asymmetry(V, F, r.vertices, d.diagonal).items():
+                seeds[label][key].append(value)
+            seeds[label]["converged"].append(r.converged)
     for w, row in panels.items():
         render_panels(row, os.path.join(out, "triangulation", f"{w}.png"), view=(10, 0),
-                      panel_size=2.4, title=f"{w} weights (sides x rings)")
-    return {"meshes": rows, "regular_20x41_vertices": vertices, "irregular_raw_cotangent": raw}
+                      panel_size=2.4, title=f"{w} weights (sides x rings); edge-length change, "
+                                            "white 0%, red 30% or more")
+    return {"meshes": rows, "regular_20x41_vertices": vertices, "irregular_raw_cotangent": raw,
+            "irregular_seeds": seeds}
 
 
 def point_handle(out):
@@ -847,6 +926,37 @@ def point_handle(out):
     return rows
 
 
+def nudge_check(deformer, targets, result, rng):
+    """Continue a result with ``NUDGE_RULE``, as it is and after a small random nudge.
+
+    The nudge moves every free vertex at random by up to 0.1% of the
+    diagonal. See ``stability`` for how the two runs are read.
+    """
+    d, X = deformer, result.vertices
+    noise = rng.uniform(-1.0, 1.0, X.shape)
+    noise *= 1e-3 * d.diagonal / np.linalg.norm(noise, axis=1).max()
+    noise[d.constrained] = 0.0
+    plain = d.deform(targets, init=X, **NUDGE_RULE)
+    again = d.deform(targets, init=X + noise, **NUDGE_RULE)
+    return {
+        "energy": result.energies[-1],
+        "energy_continued": plain.energies[-1],
+        "energy_after_nudge": again.energies[-1],
+        "nudge_against_continued": again.energies[-1] / plain.energies[-1] - 1.0,
+        "moved_over_diagonal": float(
+            np.max(np.linalg.norm(again.vertices - plain.vertices, axis=1)) / d.diagonal),
+        # How far the continued run ends from the result it started from.
+        "continued_from_result": float(
+            np.max(np.linalg.norm(plain.vertices - X, axis=1)) / d.diagonal),
+        "edge_error": edge_length_error(d.vertices, X, d.faces)["rms_relative"],
+        "volume_change": area_volume_change(d.vertices, X, d.faces)["volume_change"],
+        "iterations_continued": plain.iterations,
+        "converged_continued": plain.converged,
+        "iterations_after_nudge": again.iterations,
+        "converged_after_nudge": again.converged,
+    }
+
+
 def stability(out):
     """Nudge a result and solve again: is it a minimum or a balanced unstable state?
 
@@ -858,7 +968,6 @@ def stability(out):
     finished converging ends at the same energy both ways; from a saddle the
     nudged run ends lower than the run that was only continued.
     """
-    rng = np.random.default_rng(3)
     rule = LARGE_ROTATION_RULE
 
     def twist(angle, jitter=0.02):
@@ -891,12 +1000,12 @@ def stability(out):
         d = ARAPDeformer(sc.vertices, sc.faces, sc.constraints[0])
         return d, sc.constraints[1], d.deform(sc.constraints[1], max_iterations=MAX_ITERATIONS)
 
-    def end_caps(sides, rings):
+    def end_caps(sides, rings, weights="cotangent"):
         V, F = S.bar(rings=rings, sides=sides)
         fixed = np.flatnonzero(V[:, 2] <= V[:, 2].min() + 1e-9)
         handles = np.flatnonzero(V[:, 2] >= V[:, 2].max() - 1e-9)
         c, t = sel.combine(V, fixed, handles, S.bend_targets(V, handles, 90.0))
-        d = ARAPDeformer(V, F, c)
+        d = ARAPDeformer(V, F, c, weights=weights)
         return d, t, d.deform(t, max_iterations=MAX_ITERATIONS)
 
     def one_vertex():
@@ -911,6 +1020,8 @@ def stability(out):
     cases = {
         "bar twist 100, regular bar": lambda: twist(100, jitter=0.0),
         "bar twist 105, regular bar": lambda: twist(105, jitter=0.0),
+        "bar twist 106, regular bar": lambda: twist(106, jitter=0.0),
+        "bar twist 108, regular bar": lambda: twist(108, jitter=0.0),
         "bar twist 110, regular bar": lambda: twist(110, jitter=0.0),
         "bar twist 135, regular bar": lambda: twist(135, jitter=0.0),
         "bar twist 135 (default, jittered bar)": lambda: twist(135),
@@ -920,38 +1031,60 @@ def stability(out):
         "twist 180, 10-degree steps": lambda: twist_steps(180),
         "bend 90, one handle vertex": one_vertex,
         "bend 90, 32 x 81, end caps only": lambda: end_caps(32, 81),
+        # Meshes of the triangulation experiment that keep the even arc: is
+        # the arc a minimum, or a balanced state that a nudge tips into a kink?
+        "bend 90, 20 x 41, end caps only": lambda: end_caps(20, 41),
+        "bend 90, 16 x 81, end caps only": lambda: end_caps(16, 81),
+        "bend 90, 32 x 81, end caps only, uniform weights": lambda: end_caps(
+            32, 81, weights="uniform"),
     }
     rows = {}
-    for name, build in cases.items():
-        d, t, r = build()
-        X = r.vertices
-        noise = rng.uniform(-1.0, 1.0, X.shape)
-        noise *= 1e-3 * d.diagonal / np.linalg.norm(noise, axis=1).max()
-        noise[d.constrained] = 0.0
-        plain = d.deform(t, init=X, **NUDGE_RULE)
-        again = d.deform(t, init=X + noise, **NUDGE_RULE)
-        rows[name] = {
-            "energy": r.energies[-1],
-            "energy_continued": plain.energies[-1],
-            "energy_after_nudge": again.energies[-1],
-            "nudge_against_continued": again.energies[-1] / plain.energies[-1] - 1.0,
-            "moved_over_diagonal": float(
-                np.max(np.linalg.norm(again.vertices - plain.vertices, axis=1)) / d.diagonal),
-            "iterations_continued": plain.iterations,
-            "converged_continued": plain.converged,
-            "iterations_after_nudge": again.iterations,
-            "converged_after_nudge": again.converged,
-        }
+    for index, (name, build) in enumerate(cases.items()):
+        # A random stream of its own for every case, so that adding or
+        # reordering cases does not change the nudge of the others.
+        rows[name] = nudge_check(*build(), np.random.default_rng([3, index]))
+    return rows
+
+
+def interactive(out):
+    """The bar bend dragged in small steps with three iterations per frame.
+
+    The paper reports that 2 to 3 iterations per frame are enough when a
+    handle is dragged, because every frame starts from the previous one. Here
+    the handle of the 90-degree bar bend moves 1 or 3 degrees per frame, each
+    frame gets three iterations from the previous frame's shape, and the
+    result is compared at every frame with a solve to convergence for the
+    same handle position (``NUDGE_RULE``, continued from the previous
+    converged frame).
+    """
+    sc = S.bar_bend()
+    V, F = sc.vertices, sc.faces
+    c, _ = sc.constraints
+    d = ARAPDeformer(V, F, c)
+    rows = {}
+    for frames in (90, 30):
+        fast, exact, lag = "laplacian", "laplacian", 0.0
+        for k in range(frames):
+            angle = 90.0 * (k + 1) / frames
+            t = sel.combine(V, sc.fixed, sc.handles, S.bend_targets(V, sc.handles, angle))[1]
+            fast = d.deform(t, init=fast, max_iterations=3, energy_tol=0.0, step_tol=0.0).vertices
+            exact = d.deform(t, init=exact, **NUDGE_RULE).vertices
+            lag = max(lag, float(np.max(np.linalg.norm(fast - exact, axis=1)) / d.diagonal))
+        rows[str(frames)] = {"degrees_per_frame": 90.0 / frames, "iterations_per_frame": 3,
+                             "largest_distance_to_converged": lag}
     return rows
 
 
 # ----------------------------------------------------------------- report
-def write_summary(metrics, path):
+def write_summary(metrics, path, carried=()):
     parts = ["# Experiment summary", "",
              "Produced by `python -m experiments.run_all`. Edge error is the RMS of the "
              "relative edge-length change; distances are divided by the bounding-box diagonal. "
              "\"Iterations to within 1%\" counts the iterations until the energy is within 1% "
              "of its final value.", ""]
+    if carried:
+        parts += ["**Partial run.** Not run this time, numbers kept from an earlier run in the "
+                  "same folder: " + ", ".join(carried) + ".", ""]
     shows = [k for k in S.ALL if k in metrics]
     if shows:
         rows = []
@@ -975,13 +1108,29 @@ def write_summary(metrics, path):
             if "shape_change_final" not in m:
                 continue
             a, b = m["shape_change_initial"], m["shape_change_final"]
+            x = m.get("self_intersections")
             rows.append([k, pct(a["area_change"]), pct(b["area_change"]),
-                         pct(a["volume_change"]), pct(b["volume_change"])])
+                         pct(a["volume_change"]), pct(b["volume_change"]),
+                         "-" if x is None else f"{x['rest']} / {x['arap']}"])
         if rows:
             parts += ["Change of surface area and enclosed volume (\"-\": the mesh is open, "
-                      "so it encloses no volume).", "", markdown_table(
-                ["scenario", "area Laplacian", "area ARAP", "volume Laplacian", "volume ARAP"],
+                      "so it encloses no volume). \"crossings\" counts the pairs of an edge and "
+                      "a triangle that pass through each other in the rest pose and in the ARAP "
+                      "result; where it is not zero the surface passes through itself and the "
+                      "volume change is of the signed volume, which counts the overlap twice.",
+                      "", markdown_table(
+                ["scenario", "area Laplacian", "area ARAP", "volume Laplacian", "volume ARAP",
+                 "crossings (rest / ARAP)"],
                 rows), ""]
+        bars = [k for k in shows if "centre_line_change" in metrics[k]]
+        if bars:
+            parts += ["Where the bars' volume goes (volume = length of the centre line times the "
+                      "mean cross-section along it): " + "; ".join(
+                          f"{k}: centre line {pct(metrics[k]['centre_line_change'])}, mean "
+                          f"cross-section {pct(metrics[k]['mean_cross_section_change'])}"
+                          + (f", narrowest cross-section {fmt(metrics[k]['narrowest_ring'], 2)} "
+                             "of its rest area" if "narrowest_ring" in metrics[k] else "")
+                          for k in bars) + ".", ""]
         if "hinge" in metrics:
             h = metrics["hinge"]["top_block_edge_error"]
             parts += [f"Hinge, edge error inside the top block: Laplacian "
@@ -1029,19 +1178,24 @@ def write_summary(metrics, path):
     if "geomproc_consistency" in metrics:
         keys = ("membrane", "one_step_consistent_rhs", "ten_iterations",
                 "one_step_inconsistent_rhs", "area_weighted_consistent_rhs",
-                "area_weighted_inconsistent_rhs", "libigl_ten_iterations_raw_weights")
+                "area_weighted_inconsistent_rhs", "libigl_ten_iterations_raw_weights",
+                "libigl_ten_iterations_with_libigl_fit")
         rows = [[name] + [fmt(m[k], 2) if k in m else "-" for k in keys]
                 for name, m in metrics["geomproc_consistency"].items()]
         parts += ["## Agreement with GeomProc's operator and with libigl", "",
                   "Largest distance between corresponding vertices, divided by the "
-                  "bounding-box diagonal. The libigl column is empty when libigl is not "
-                  "installed.", "",
+                  "bounding-box diagonal. The libigl columns are empty when libigl is not "
+                  "installed. The last column repeats the ten iterations with libigl's own "
+                  "single-precision rotation fit in place of the one here. The entries at "
+                  "rounding level (1e-12 and below) come from dense solves and depend on the "
+                  "number of threads the linear algebra library uses.", "",
                   markdown_table(["scenario", "membrane, GeomProc operator",
                                   "one ARAP step, GeomProc operator", "ten ARAP iterations, GeomProc operator",
                                   "one step, GeomProc operator, inconsistent b",
                                   "one step, area-weighted, consistent b",
                                   "one step, area-weighted, inconsistent b",
-                                  "libigl, ten iterations"], rows), ""]
+                                  "libigl, ten iterations",
+                                  "libigl, ten iterations, libigl's rotation fit"], rows), ""]
     if "large_rotations" in metrics:
         rows = []
         for kind in ("bend", "twist"):
@@ -1099,6 +1253,16 @@ def write_summary(metrics, path):
                   "constrained), every third step:", "",
                   markdown_table(["handle rotation", "twist reached", "narrowest",
                                   "crossings", "energy", "iterations", "converged"], rows), ""]
+        check = lt.get("stability")
+        if check:
+            parts += ["The long bar's 270-degree twist in the nudge test of the last section: "
+                      f"energy {fmt(check['energy'], 5)}, continued "
+                      f"{fmt(check['energy_continued'], 5)}, nudged "
+                      f"{fmt(check['energy_after_nudge'], 5)} "
+                      f"({100 * check['nudge_against_continued']:+.3f}% against continued), the "
+                      f"two shapes {100 * check['moved_over_diagonal']:.2f}% of the diagonal "
+                      f"apart, converged {fmt(check['converged_continued'])} / "
+                      f"{fmt(check['converged_after_nudge'])}.", ""]
     if "triangulation" in metrics:
         tri = metrics["triangulation"]["meshes"]
         share = lambda x: f"{100 * x:.2f}%"
@@ -1131,7 +1295,10 @@ def write_summary(metrics, path):
                   "Cotangent energies of different meshes are comparable on the regular meshes "
                   f"only: on the irregular mesh {raw['negative_weight_edges']} of "
                   f"{raw['edges']} edges have a negative cotangent weight, which is clamped "
-                  "to zero.", "",
+                  "to zero. \"converged\" means that the default stopping rule fired, not that "
+                  "the shape has stopped moving. A finer mesh samples a crease of the same width "
+                  "with more rings, so kink values are comparable between meshes with the same "
+                  "number of rings only.", "",
                   markdown_table(["weights", "mesh", "vertices", "iterations", "converged",
                                   "energy", "edge error", "distance to cotangent 20 x 41 (RMS)",
                                   "distance to same weights' 20 x 41 (RMS)",
@@ -1148,6 +1315,17 @@ def write_summary(metrics, path):
                   f"{fmt(raw['energy_final'])}, mirror asymmetry "
                   f"{share(raw['mirror_asymmetry_rms'])} (RMS) and "
                   f"{share(raw['mirror_asymmetry_max'])} (max).", ""]
+        by_seed = metrics["triangulation"].get("irregular_seeds")
+        if by_seed:
+            span = lambda xs: f"{share(min(xs))} to {share(max(xs))} (median {share(float(np.median(xs)))})"
+            n = len(by_seed["cotangent"]["mirror_asymmetry_rms"])
+            parts += [f"The irregular mesh is one random draw (seed 0). Mirror asymmetry over {n} "
+                      "draws (seeds 0 to " + str(n - 1) + "):", "",
+                      markdown_table(["weights", "RMS", "max", "converged"],
+                                     [[label, span(m["mirror_asymmetry_rms"]),
+                                       span(m["mirror_asymmetry_max"]),
+                                       f"{sum(m['converged'])} of {n}"]
+                                      for label, m in by_seed.items()]), ""]
     if "point_handle" in metrics:
         rows = [[name, m["handle_vertices"], m["iterations"], fmt(m["energy_final"]),
                  fmt(m["edge_error_final"]["rms_relative"]),
@@ -1164,8 +1342,10 @@ def write_summary(metrics, path):
                  fmt(m["energy_after_nudge"], 5),
                  f"{100 * m['nudge_against_continued']:+.3f}%",
                  f"{100 * m['moved_over_diagonal']:.2f}%",
+                 f"{100 * m['continued_from_result']:.2f}%",
                  f"{m['iterations_continued']} / {m['iterations_after_nudge']}",
-                 f"{fmt(m['converged_continued'])} / {fmt(m['converged_after_nudge'])}"]
+                 f"{fmt(m['converged_continued'])} / {fmt(m['converged_after_nudge'])}",
+                 fmt(m["edge_error"]), pct(m["volume_change"])]
                 for name, m in metrics["stability"].items()]
         parts += ["## Is the result a minimum? (nudge and solve again)", "",
                   "Each result is continued twice with a tight stopping rule (energy decrease "
@@ -1177,11 +1357,26 @@ def write_summary(metrics, path):
                   "and \"apart\" is the largest distance between the two final shapes as a share "
                   "of the diagonal. If the nudged run ends clearly lower, the result was a "
                   "balanced state that is not a minimum. If both end at the same energy below "
-                  "the result's, the result had only not finished converging.", "",
+                  "the result's, the result had only not finished converging; \"moved on\" is "
+                  "how far the continued run ends from the result it started from, so it shows "
+                  "how far short the result had stopped. Two runs that are both unconverged and "
+                  "agree say only that they creep the same way. The last two columns are the "
+                  "edge error and the volume change of the result itself.", "",
                   markdown_table(["result", "energy", "continued", "nudged",
-                                  "nudged against continued", "apart",
+                                  "nudged against continued", "apart", "moved on",
                                   "iterations (continued / nudged)",
-                                  "converged (continued / nudged)"], rows), ""]
+                                  "converged (continued / nudged)", "edge error",
+                                  "volume change"], rows), ""]
+    if "interactive" in metrics:
+        rows = [[fmt(m["degrees_per_frame"]), m["iterations_per_frame"],
+                 f"{100 * m['largest_distance_to_converged']:.2f}%"]
+                for m in metrics["interactive"].values()]
+        parts += ["## A few iterations per frame (bar bend dragged to 90 degrees)", "",
+                  "Every frame starts from the previous frame's shape with the handle moved on. "
+                  "The last column is the largest distance, over all frames and vertices, to the "
+                  "converged shape for the same handle position, as a share of the diagonal.", "",
+                  markdown_table(["handle rotation per frame (degrees)", "iterations per frame",
+                                  "largest distance to the converged shape"], rows), ""]
     with open(path, "w") as f:
         f.write("\n".join(parts))
 
@@ -1198,6 +1393,7 @@ EXPERIMENTS.update({
     "triangulation": triangulation,
     "long_twist": long_twist,
     "stability": stability,
+    "interactive": interactive,
 })
 
 DOC_FIGURES = [
@@ -1253,13 +1449,23 @@ def main(argv=None):
     if os.path.exists(metrics_path):
         with open(metrics_path) as f:
             metrics = json.load(f)
+    # Earlier results are kept, except those of experiments that no longer exist.
+    metrics = {k: v for k, v in metrics.items() if k in EXPERIMENTS}
+    carried = [k for k in metrics if k not in names]
     for name in names:
         start = time.perf_counter()
         metrics[name] = to_builtin(EXPERIMENTS[name](args.out))
         print(f"{name}: {time.perf_counter() - start:.1f} s", flush=True)
         with open(metrics_path, "w") as f:
             json.dump(metrics, f, indent=2, allow_nan=False)
-    write_summary(metrics, os.path.join(args.out, "summary.md"))
+    try:
+        write_summary(metrics, os.path.join(args.out, "summary.md"), carried)
+    except KeyError as missing:
+        if not carried:
+            raise
+        raise SystemExit(f"summary.md not written: metrics.json holds results from an older "
+                         f"version of the experiments (no {missing} entry). Run "
+                         f"{', '.join(carried)} again or delete {metrics_path}.")
     if args.update_docs:
         docs = os.path.join(ROOT, "docs")
         for rel in DOC_FIGURES:

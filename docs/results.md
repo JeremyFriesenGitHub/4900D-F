@@ -6,23 +6,25 @@ Produced by `python -m experiments.run_all`. Edge error is the RMS of the relati
 
 | scenario | vertices | constrained | iterations | converged | energy never rose | iterations to within 1% | edge error Laplacian | edge error ARAP | largest move after iteration 100 | setup (s) | ms / iteration |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| bar_bend | 822 | 82 | 128 | yes | yes | 31 | 0.191 | 0.065 | 0.00047 | 0.00505 | 3.2 |
-| bar_twist | 822 | 82 | 440 | yes | yes | 131 | 0.174 | 0.0668 | 0.028 | 0.00507 | 3.3 |
-| hinge | 6002 | 1202 | 132 | yes | yes | 108 | 0.669 | 0.011 | 0.00056 | 0.0273 | 21.9 |
-| bunny_ears | 2503 | 881 | 155 | yes | yes | 22 | 0.0679 | 0.0362 | 0.0013 | 0.0138 | 10.3 |
-| kid_arms | 8441 | 724 | 862 | yes | yes | 90 | 0.201 | 0.0406 | 0.042 | 0.0424 | 36.8 |
-| camel_drink | 9770 | 3381 | 797 | yes | yes | 96 | 0.1 | 0.0168 | 0.02 | 0.0384 | 42.1 |
+| bar_bend | 822 | 82 | 128 | yes | yes | 31 | 0.191 | 0.065 | 0.00047 | 0.00741 | 3.27 |
+| bar_twist | 822 | 82 | 440 | yes | yes | 131 | 0.174 | 0.0668 | 0.028 | 0.00402 | 3.24 |
+| hinge | 6002 | 1202 | 132 | yes | yes | 108 | 0.669 | 0.011 | 0.00056 | 0.0234 | 21.4 |
+| bunny_ears | 2503 | 881 | 155 | yes | yes | 22 | 0.0679 | 0.0362 | 0.0013 | 0.0143 | 10.3 |
+| kid_arms | 8441 | 724 | 862 | yes | yes | 90 | 0.201 | 0.0406 | 0.042 | 0.0455 | 36.6 |
+| camel_drink | 9770 | 3381 | 797 | yes | yes | 96 | 0.1 | 0.0168 | 0.02 | 0.048 | 40.2 |
 
-Change of surface area and enclosed volume ("-": the mesh is open, so it encloses no volume).
+Change of surface area and enclosed volume ("-": the mesh is open, so it encloses no volume). "crossings" counts the pairs of an edge and a triangle that pass through each other in the rest pose and in the ARAP result; where it is not zero the surface passes through itself and the volume change is of the signed volume, which counts the overlap twice.
 
-| scenario | area Laplacian | area ARAP | volume Laplacian | volume ARAP |
-|---|---|---|---|---|
-| bar_bend | -18.5% | -0.4% | -33.8% | -2.6% |
-| bar_twist | -7.4% | -1.0% | -16.9% | -11.5% |
-| hinge | -4.7% | -0.0% | -16.0% | -0.1% |
-| bunny_ears | +1.7% | +2.0% | - | - |
-| kid_arms | +20.4% | +3.0% | +27.2% | -4.0% |
-| camel_drink | -4.0% | -0.3% | -2.5% | -0.6% |
+| scenario | area Laplacian | area ARAP | volume Laplacian | volume ARAP | crossings (rest / ARAP) |
+|---|---|---|---|---|---|
+| bar_bend | -18.5% | -0.4% | -33.8% | -2.6% | 0 / 0 |
+| bar_twist | -7.4% | -1.0% | -16.9% | -11.5% | 0 / 0 |
+| hinge | -4.7% | 0.0% | -16.0% | -0.1% | 0 / 326 |
+| bunny_ears | +1.7% | +2.0% | - | - | 0 / 0 |
+| kid_arms | +20.4% | +3.0% | +27.2% | -4.0% | 0 / 0 |
+| camel_drink | -4.0% | -0.3% | -2.5% | -0.6% | 20 / 300 |
+
+Where the bars' volume goes (volume = length of the centre line times the mean cross-section along it): bar_bend: centre line +0.6%, mean cross-section -3.2%; bar_twist: centre line 0.0%, mean cross-section -11.5%, narrowest cross-section 0.74 of its rest area.
 
 Hinge, edge error inside the top block: Laplacian 0.331, ARAP 0.000221.
 
@@ -57,15 +59,15 @@ Hinge, edge error inside the top block: Laplacian 0.331, ARAP 0.000221.
 
 | scenario | initial guess | iterations | iterations to within 1% | energy start | energy end | distance to Laplacian-start result | seconds |
 |---|---|---|---|---|---|---|---|
-| bar_bend | laplacian | 128 | 31 | 0.216 | 0.0156 | 0 | 0.429 |
-| bar_bend | thin_plate | 118 | 14 | 0.114 | 0.0156 | 0.000422 | 0.379 |
-| bar_bend | rest | 142 | 38 | 22.5 | 0.0156 | 5.02e-05 | 0.442 |
-| hinge | laplacian | 132 | 108 | 2.79 | 0.000599 | 0 | 3.04 |
-| hinge | thin_plate | 93 | 65 | 0.474 | 0.000596 | 0.000586 | 2.12 |
-| hinge | rest | 227 | 201 | 335 | 0.000598 | 0.000438 | 5.05 |
-| camel_drink | laplacian | 797 | 96 | 0.178 | 0.0102 | 0 | 32.1 |
-| camel_drink | thin_plate | 781 | 146 | 0.165 | 0.0102 | 0.000802 | 31.7 |
-| camel_drink | rest | 798 | 97 | 23.1 | 0.0102 | 2.78e-06 | 32.1 |
+| bar_bend | laplacian | 128 | 31 | 0.216 | 0.0156 | 0 | 0.381 |
+| bar_bend | thin_plate | 118 | 14 | 0.114 | 0.0156 | 0.000422 | 0.353 |
+| bar_bend | rest | 142 | 38 | 22.5 | 0.0156 | 5.02e-05 | 0.478 |
+| hinge | laplacian | 132 | 108 | 2.79 | 0.000599 | 0 | 2.87 |
+| hinge | thin_plate | 93 | 65 | 0.474 | 0.000596 | 0.000586 | 1.97 |
+| hinge | rest | 227 | 201 | 335 | 0.000598 | 0.000438 | 5.29 |
+| camel_drink | laplacian | 797 | 96 | 0.178 | 0.0102 | 0 | 31.6 |
+| camel_drink | thin_plate | 781 | 146 | 0.165 | 0.0102 | 0.000802 | 30.1 |
+| camel_drink | rest | 798 | 97 | 23.1 | 0.0102 | 2.78e-06 | 33.2 |
 
 ## Timing (bar bend, 20 iterations)
 
@@ -73,21 +75,21 @@ Medians of repeated runs. The dense global step is one row-replaced `numpy.linal
 
 | vertices | setup (s) | local step (ms) | global step (ms) | dense global step (ms) | GeomProc Laplacian build (s) |
 |---|---|---|---|---|---|
-| 302 | 0.00256 | 0.935 | 0.154 | 1.48 | 0.106 |
-| 822 | 0.00426 | 2.5 | 0.361 | 10.5 | 0.298 |
-| 2594 | 0.00981 | 7.5 | 1.09 | 150 | 0.954 |
-| 5810 | 0.0195 | 16.4 | 2.46 | 1.03e+03 | 2.25 |
-| 10306 | 0.0333 | 28.8 | 4.73 | - | - |
-| 23138 | 0.0884 | 68.8 | 11.4 | - | - |
+| 302 | 0.00428 | 1.64 | 0.247 | 1.48 | 0.103 |
+| 822 | 0.00401 | 2.45 | 0.355 | 10.7 | 0.277 |
+| 2594 | 0.00907 | 7.9 | 1.13 | 177 | 0.939 |
+| 5810 | 0.0185 | 16.8 | 2.63 | 1228 | 2.38 |
+| 10306 | 0.0348 | 29.1 | 4.77 | - | - |
+| 23138 | 0.0899 | 67.4 | 11.9 | - | - |
 
 ## Agreement with GeomProc's operator and with libigl
 
-Largest distance between corresponding vertices, divided by the bounding-box diagonal. The libigl column is empty when libigl is not installed.
+Largest distance between corresponding vertices, divided by the bounding-box diagonal. The libigl columns are empty when libigl is not installed. The last column repeats the ten iterations with libigl's own single-precision rotation fit in place of the one here. The entries at rounding level (1e-12 and below) come from dense solves and depend on the number of threads the linear algebra library uses.
 
-| scenario | membrane, GeomProc operator | one ARAP step, GeomProc operator | ten ARAP iterations, GeomProc operator | one step, GeomProc operator, inconsistent b | one step, area-weighted, consistent b | one step, area-weighted, inconsistent b | libigl, ten iterations |
-|---|---|---|---|---|---|---|---|
-| bar_bend | 7e-15 | 6.9e-15 | 2.1e-14 | 0.34 | 2.1e-12 | 0.11 | 9.2e-06 |
-| bunny_ears | 1.1e-15 | 1.5e-15 | 5.5e-15 | 0.68 | 4.5e-13 | 0.24 | 5.8e-05 |
+| scenario | membrane, GeomProc operator | one ARAP step, GeomProc operator | ten ARAP iterations, GeomProc operator | one step, GeomProc operator, inconsistent b | one step, area-weighted, consistent b | one step, area-weighted, inconsistent b | libigl, ten iterations | libigl, ten iterations, libigl's rotation fit |
+|---|---|---|---|---|---|---|---|---|
+| bar_bend | 7e-15 | 6.9e-15 | 2.1e-14 | 0.34 | 2.1e-12 | 0.11 | 9.2e-06 | 5.1e-08 |
+| bunny_ears | 1.1e-15 | 1.5e-15 | 5.5e-15 | 0.68 | 4.5e-13 | 0.24 | 5.8e-05 | 2.1e-15 |
 
 ## Large rotations
 
@@ -113,9 +115,9 @@ Bends use a bar of radius 0.05, twists the default (slightly jittered) bar. Ever
 | twist | 270 | laplacian | 184 | yes | 0.0161 | 0.0406 | -3.2% | 0 | -90 | 0.96 |
 | twist | 270 | thin_plate | 179 | yes | 0.0161 | 0.0406 | -3.2% | 0 | -90 | 0.96 |
 | twist | 270 | steps | 33639 | yes | 0.0254 | 0.0537 | -7.5% | 46 | -90 | 0.58 |
-| twist | 360 | laplacian | 1 | yes | 2.23e-29 | 1.96e-15 | -0.0% | 0 | 0 | 1 |
-| twist | 360 | thin_plate | 1 | yes | 1.97e-29 | 1.86e-15 | -0.0% | 0 | 0 | 1 |
-| twist | 360 | steps | 35045 | yes | 1.01e-09 | 1.09e-05 | +0.0% | 0 | 0 | 1 |
+| twist | 360 | laplacian | 1 | yes | 2.23e-29 | 1.96e-15 | 0.0% | 0 | 0 | 1 |
+| twist | 360 | thin_plate | 1 | yes | 1.97e-29 | 1.86e-15 | 0.0% | 0 | 0 | 1 |
+| twist | 360 | steps | 35045 | yes | 1.01e-09 | 1.09e-05 | 0.0% | 0 | 0 | 1 |
 
 Twist in 10-degree steps, after each step:
 
@@ -172,9 +174,11 @@ Twist in 10-degree steps on a bar three times as long (same radius, ring spacing
 | 240 | 240 | 0.98 | 0 | 0.0367 | 762 | yes |
 | 270 | 270 | 0.97 | 0 | 0.0463 | 756 | yes |
 
+The long bar's 270-degree twist in the nudge test of the last section: energy 0.046254, continued 0.046254, nudged 0.046254 (+0.000% against continued), the two shapes 0.00% of the diagonal apart, converged yes / yes.
+
 ## Triangulation and resolution (bar bent by 90 degrees)
 
-Meshes are named sides x rings. Only the end caps are constrained. Distances are measured at 800 fixed points of the bar's side, as a share of the bounding-box diagonal, to the 20 x 41 cotangent result and to the 20 x 41 result with the same weights. Before any deformation these points already lie up to 0.18% (RMS) from those of the 20 x 41 mesh, since each side is a polygon with its own number of sides. The bend is symmetric about the plane x = 0; "mirror asymmetry" is the distance between the result and its mirror image at the same points. On a regular mesh the points and their mirror images lie in triangles whose diagonals run the other way, so an exactly symmetric result still shows a few hundredths of a percent there, and the irregular mesh shows 0.05% (RMS) before any deformation. "kink" is the sharpest turn of the centre line from one ring to the next divided by its mean turn (1 for an even arc; "-": the rings of the irregular mesh are not level). Cotangent energies of different meshes are comparable on the regular meshes only: on the irregular mesh 400 of 2460 edges have a negative cotangent weight, which is clamped to zero.
+Meshes are named sides x rings. Only the end caps are constrained. Distances are measured at 800 fixed points of the bar's side, as a share of the bounding-box diagonal, to the 20 x 41 cotangent result and to the 20 x 41 result with the same weights. Before any deformation these points already lie up to 0.18% (RMS) from those of the 20 x 41 mesh, since each side is a polygon with its own number of sides. The bend is symmetric about the plane x = 0; "mirror asymmetry" is the distance between the result and its mirror image at the same points. On a regular mesh the points and their mirror images lie in triangles whose diagonals run the other way, so an exactly symmetric result still shows a few hundredths of a percent there, and the irregular mesh shows 0.05% (RMS) before any deformation. "kink" is the sharpest turn of the centre line from one ring to the next divided by its mean turn (1 for an even arc; "-": the rings of the irregular mesh are not level). Cotangent energies of different meshes are comparable on the regular meshes only: on the irregular mesh 400 of 2460 edges have a negative cotangent weight, which is clamped to zero. "converged" means that the default stopping rule fired, not that the shape has stopped moving. A finer mesh samples a crease of the same width with more rings, so kink values are comparable between meshes with the same number of rings only.
 
 | weights | mesh | vertices | iterations | converged | energy | edge error | distance to cotangent 20 x 41 (RMS) | distance to same weights' 20 x 41 (RMS) | mirror asymmetry (RMS) | mirror asymmetry (max) | kink | volume change |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -210,6 +214,14 @@ Vertex by vertex on the regular 20 x 41 mesh, with no interpolation:
 
 The irregular mesh with its negative cotangent weights left in (no clamp): 588 iterations, converged yes, energy 0.0144, mirror asymmetry 0.35% (RMS) and 1.53% (max).
 
+The irregular mesh is one random draw (seed 0). Mirror asymmetry over 24 draws (seeds 0 to 23):
+
+| weights | RMS | max | converged |
+|---|---|---|---|
+| cotangent | 0.18% to 0.23% (median 0.20%) | 0.35% to 0.43% (median 0.39%) | 24 of 24 |
+| uniform | 1.03% to 1.06% (median 1.05%) | 1.55% to 1.63% (median 1.58%) | 24 of 24 |
+| cotangent, raw | 0.18% to 1.48% (median 0.48%) | 0.52% to 5.45% (median 1.91%) | 24 of 24 |
+
 ## One handle vertex against a handle patch (bar, 90-degree bend)
 
 The end is moved to the same place in every case. "end rotation" is the angle by which the top end of the bar turned.
@@ -217,23 +229,37 @@ The end is moved to the same place in every case. "end rotation" is the angle by
 | handle | handle vertices | iterations | energy | edge error | end rotation (degrees) | volume change |
 |---|---|---|---|---|---|---|
 | one vertex | 1 | 541 | 0.0113 | 0.048 | 65 | -5.2% |
-| end patch moved | 41 | 196 | 0.0309 | 0.0718 | 1.21e-06 | -10.9% |
+| end patch moved | 41 | 196 | 0.0309 | 0.0718 | 9.09e-16 | -10.9% |
 | end patch moved and turned | 41 | 128 | 0.0156 | 0.065 | 90 | -2.6% |
 
 ## Is the result a minimum? (nudge and solve again)
 
-Each result is continued twice with a tight stopping rule (energy decrease below 1e-10 of the start, step below 1e-08 of the diagonal, at most 5000 iterations): as it is ("continued"), and after every free vertex is moved at random by up to 0.1% of the diagonal ("nudged"). "nudged against continued" compares the two final energies and "apart" is the largest distance between the two final shapes as a share of the diagonal. If the nudged run ends clearly lower, the result was a balanced state that is not a minimum. If both end at the same energy below the result's, the result had only not finished converging.
+Each result is continued twice with a tight stopping rule (energy decrease below 1e-10 of the start, step below 1e-08 of the diagonal, at most 5000 iterations): as it is ("continued"), and after every free vertex is moved at random by up to 0.1% of the diagonal ("nudged"). "nudged against continued" compares the two final energies and "apart" is the largest distance between the two final shapes as a share of the diagonal. If the nudged run ends clearly lower, the result was a balanced state that is not a minimum. If both end at the same energy below the result's, the result had only not finished converging; "moved on" is how far the continued run ends from the result it started from, so it shows how far short the result had stopped. Two runs that are both unconverged and agree say only that they creep the same way. The last two columns are the edge error and the volume change of the result itself.
 
-| result | energy | continued | nudged | nudged against continued | apart | iterations (continued / nudged) | converged (continued / nudged) |
-|---|---|---|---|---|---|---|---|
-| bar twist 100, regular bar | 0.019603 | 0.019603 | 0.019603 | +0.000% | 0.00% | 152 / 579 | yes / yes |
-| bar twist 105, regular bar | 0.021564 | 0.021564 | 0.021564 | +0.000% | 0.00% | 153 / 2044 | yes / yes |
-| bar twist 110, regular bar | 0.023611 | 0.023611 | 0.023592 | -0.081% | 1.14% | 155 / 3088 | yes / yes |
-| bar twist 135, regular bar | 0.035097 | 0.035097 | 0.03383 | -3.610% | 4.01% | 167 / 738 | yes / yes |
-| bar twist 135 (default, jittered bar) | 0.034175 | 0.034173 | 0.034173 | -0.000% | 0.00% | 5000 / 5000 | no / no |
-| bar bend 90 (default) | 0.015611 | 0.015611 | 0.015611 | +0.000% | 0.00% | 197 / 190 | yes / yes |
-| bend 270, thin bar, Laplacian start | 0.049544 | 0.049544 | 0.049544 | -0.000% | 0.00% | 625 / 716 | yes / yes |
-| bend 270, thin bar, 10-degree steps | 0.014873 | 0.014873 | 0.014873 | -0.000% | 0.00% | 5000 / 5000 | no / no |
-| twist 180, 10-degree steps | 0.051647 | 0.051647 | 0.051647 | -0.000% | 0.00% | 5000 / 5000 | no / no |
-| bend 90, one handle vertex | 0.011314 | 0.011314 | 0.011314 | +0.000% | 0.00% | 1021 / 1008 | yes / yes |
-| bend 90, 32 x 81, end caps only | 0.011338 | 0.011331 | 0.011331 | -0.000% | 0.00% | 4073 / 4073 | yes / yes |
+| result | energy | continued | nudged | nudged against continued | apart | moved on | iterations (continued / nudged) | converged (continued / nudged) | edge error | volume change |
+|---|---|---|---|---|---|---|---|---|---|---|
+| bar twist 100, regular bar | 0.019603 | 0.019603 | 0.019603 | +0.000% | 0.00% | 0.02% | 152 / 579 | yes / yes | 0.0548 | -3.4% |
+| bar twist 105, regular bar | 0.021564 | 0.021564 | 0.021564 | +0.000% | 0.00% | 0.02% | 153 / 1379 | yes / yes | 0.0579 | -3.7% |
+| bar twist 106, regular bar | 0.021966 | 0.021966 | 0.021966 | +0.000% | 0.00% | 0.02% | 153 / 2495 | yes / yes | 0.0585 | -3.8% |
+| bar twist 108, regular bar | 0.022782 | 0.022782 | 0.022778 | -0.016% | 0.72% | 0.02% | 154 / 5000 | yes / no | 0.0597 | -4.0% |
+| bar twist 110, regular bar | 0.023611 | 0.023611 | 0.023592 | -0.081% | 1.14% | 0.02% | 155 / 2901 | yes / yes | 0.0609 | -4.1% |
+| bar twist 135, regular bar | 0.035097 | 0.035097 | 0.03383 | -3.610% | 3.98% | 0.02% | 167 / 816 | yes / yes | 0.0764 | -6.1% |
+| bar twist 135 (default, jittered bar) | 0.034175 | 0.034173 | 0.034173 | +0.000% | 0.00% | 0.54% | 5000 / 5000 | no / no | 0.0668 | -11.5% |
+| bar bend 90 (default) | 0.015611 | 0.015611 | 0.015611 | +0.000% | 0.00% | 0.03% | 197 / 195 | yes / yes | 0.065 | -2.6% |
+| bend 270, thin bar, Laplacian start | 0.049544 | 0.049544 | 0.049544 | +0.000% | 0.00% | 0.01% | 625 / 661 | yes / yes | 0.0631 | -108.1% |
+| bend 270, thin bar, 10-degree steps | 0.014873 | 0.014873 | 0.014873 | +0.000% | 0.00% | 0.20% | 5000 / 5000 | no / no | 0.0698 | -14.1% |
+| twist 180, 10-degree steps | 0.051647 | 0.051647 | 0.051647 | -0.000% | 0.00% | 0.21% | 5000 / 5000 | no / no | 0.0788 | -23.3% |
+| bend 90, one handle vertex | 0.011314 | 0.011314 | 0.011314 | +0.000% | 0.00% | 0.15% | 1021 / 1033 | yes / yes | 0.048 | -5.2% |
+| bend 90, 32 x 81, end caps only | 0.011338 | 0.011331 | 0.011331 | -0.000% | 0.00% | 1.13% | 4073 / 4075 | yes / yes | 0.0442 | -8.8% |
+| bend 90, 20 x 41, end caps only | 0.014823 | 0.014823 | 0.014823 | -0.000% | 0.00% | 0.03% | 191 / 193 | yes / yes | 0.0635 | -2.9% |
+| bend 90, 16 x 81, end caps only | 0.014706 | 0.014704 | 0.014704 | -0.000% | 0.00% | 0.28% | 2464 / 2474 | yes / yes | 0.0613 | -2.5% |
+| bend 90, 32 x 81, end caps only, uniform weights | 0.014448 | 0.014447 | 0.014447 | +0.000% | 0.00% | 0.04% | 348 / 350 | yes / yes | 0.0615 | -1.1% |
+
+## A few iterations per frame (bar bend dragged to 90 degrees)
+
+Every frame starts from the previous frame's shape with the handle moved on. The last column is the largest distance, over all frames and vertices, to the converged shape for the same handle position, as a share of the diagonal.
+
+| handle rotation per frame (degrees) | iterations per frame | largest distance to the converged shape |
+|---|---|---|
+| 1 | 3 | 0.58% |
+| 3 | 3 | 1.54% |

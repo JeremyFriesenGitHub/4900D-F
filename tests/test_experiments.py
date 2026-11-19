@@ -234,3 +234,63 @@ def test_bend_targets_put_the_end_on_the_arc():
         theta, R = np.radians(angle), 1.0 / np.radians(angle)
         centre = T.mean(axis=0)
         assert np.allclose(centre, [0.0, -R * (1 - np.cos(theta)), -0.5 + R * np.sin(theta)])
+
+
+def test_rotation_angle_resolves_no_rotation_and_small_ones():
+    P = np.random.default_rng(2).normal(size=(40, 3))
+    assert X.rotation_angle(P, P + [1.0, 2.0, 3.0]) < 1e-10
+    assert np.isclose(X.rotation_angle(P, P @ sel.rotation("z", 1e-5).T), 1e-5, rtol=1e-6)
+    assert np.isclose(X.rotation_angle(P, P @ sel.rotation("y", 179.5).T), 179.5)
+
+
+def test_iterations_to_within_one_percent():
+    assert X.iterations_to_within([10.0, 2.0, 1.02, 1.005, 1.0]) == 3
+    assert X.iterations_to_within([1.0, 1.0]) == 0
+    # A negative final energy (raw weights): the margin is 1 % of its size.
+    assert X.iterations_to_within([-1.0, -1.8, -1.99, -2.0]) == 2
+
+
+def test_table_formatting():
+    assert X.fmt(1030.2) == "1030" and X.fmt(0.0123456) == "0.0123" and X.fmt(128) == "128"
+    assert X.fmt(True) == "yes" and X.fmt(6.9e-15, 2) == "6.9e-15"
+    assert X.pct(0.0126) == "+1.3%" and X.pct(-0.338) == "-33.8%"
+    assert X.pct(-0.0004) == "0.0%" and X.pct(None) == "-"
+
+
+def test_energy_monotone_flag_ignores_rounding_noise():
+    class Run:
+        iterations, converged, timings = 2, True, {}
+
+    V, F = S.bar(rings=5, sides=6)
+    Run.vertices = Run.initial_guess = V
+    Run.energies = [3e-29, 7e-29, 1e-29]  # the target is the rest pose
+    assert X.summarize(Run, V, F)["energy_monotone"]
+    Run.energies = [1.0, 0.5, 0.5 + 1e-9]  # a real rise, however small
+    assert not X.summarize(Run, V, F)["energy_monotone"]
+
+
+def test_stripes_follow_the_columns_of_a_jittered_bar():
+    sc = S.bar_twist()
+    V, F = sc.vertices, sc.faces
+    c, _ = sc.constraints
+    colors = np.zeros((V.shape[0], 3))
+    stripes = X.stripe_face_colors(V, F, colors, c)
+    regular = X.stripe_face_colors(*S.bar(), colors, c)
+    assert np.array_equal(stripes, regular)  # the jitter flips no face
+    held = np.isin(F, c).all(axis=1)
+    assert np.all(stripes[held] == 0.0) and np.all(stripes[~held].min(axis=1) > 0.0)
+
+
+def test_partial_run_names_what_it_kept_and_drops_retired_entries(tmp_path):
+    import json
+
+    out = str(tmp_path)
+    with open(tmp_path / "metrics.json", "w") as f:
+        json.dump({"an experiment that no longer exists": {"x": 1}}, f)
+    X.main(["--only", "bar_bend", "--out", out])
+    with open(tmp_path / "metrics.json") as f:
+        assert list(json.load(f)) == ["bar_bend"]
+    assert "Partial run" not in (tmp_path / "summary.md").read_text()
+    X.main(["--only", "bar_twist", "--out", out])
+    summary = (tmp_path / "summary.md").read_text()
+    assert "Partial run" in summary and "earlier run in the same folder: bar_bend" in summary

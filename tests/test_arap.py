@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from arap import laplacian as lap
 from arap import selection
 from arap.linear import LinearDeformer
 from arap.solver import ARAPDeformer
@@ -53,8 +54,9 @@ def test_identity_rotation_step_is_laplacian_editing(bar):
 
 
 @pytest.mark.parametrize("clamp", ["zero", "none"])
-def test_gradient_matches_finite_differences(cube, rng, clamp):
-    V, F = cube
+def test_gradient_matches_finite_differences(bunny, rng, clamp):
+    # The bunny has varying and, unclamped, negative weights (the cube's are all 1).
+    V, F = bunny
     d = ARAPDeformer(V, F, [0], clamp=clamp)
     X = V + 0.05 * rng.normal(size=V.shape)
     R = np.stack([random_rotation(rng) for _ in range(V.shape[0])])
@@ -205,3 +207,149 @@ def test_unreferenced_vertex_is_reported(cube):
     V2 = np.vstack([V, [5.0, 5.0, 5.0]])
     with pytest.raises(ValueError, match="unreferenced"):
         ARAPDeformer(V2, F, [0])
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+@pytest.mark.parametrize("weights", ["cotangent", "uniform"])
+def test_non_finite_vertices_are_rejected(bar, bad, weights):
+    from arap.linear import LinearDeformer
+
+    V, F = bar
+    c, t = bar_bend(V)[:2]
+    for index in (c[0], np.setdiff1d(np.arange(len(V)), c)[0]):
+        broken = V.copy()
+        broken[index, 0] = bad
+        with pytest.raises(ValueError, match="vertices contain"):
+            ARAPDeformer(broken, F, c, weights=weights)
+        for method in ("laplacian", "thin_plate"):
+            with pytest.raises(ValueError, match="vertices contain"):
+                LinearDeformer(broken, F, c, method=method, weights=weights)
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_non_finite_targets_and_initial_guess_are_rejected(bar, bad):
+    from arap.linear import LinearDeformer
+
+    V, F = bar
+    c, t = bar_bend(V)[:2]
+    broken = t.copy()
+    broken[0, 0] = bad
+    d = ARAPDeformer(V, F, c)
+    with pytest.raises(ValueError, match="targets contain"):
+        d.deform(broken)
+    with pytest.raises(ValueError, match="targets contain"):
+        LinearDeformer(V, F, c).deform(broken)
+    guess = V.copy()
+    guess[np.setdiff1d(np.arange(len(V)), c)[0], 0] = bad
+    with pytest.raises(ValueError, match="initial guess contains"):
+        d.deform(t, init=guess)
+
+
+def test_constrained_must_be_integer_indices(bar):
+    from arap.linear import LinearDeformer
+
+    V, F = bar
+    c = bar_bend(V)[0]
+    mask = np.zeros(len(V), dtype=bool)
+    mask[c] = True
+    for bad in (mask, c.astype(float)):
+        with pytest.raises(TypeError, match="integer vertex indices"):
+            ARAPDeformer(V, F, bad)
+        with pytest.raises(TypeError, match="integer vertex indices"):
+            LinearDeformer(V, F, bad)
+    # A column of indices is flattened by both deformers.
+    column = c.reshape(-1, 1)
+    assert ARAPDeformer(V, F, column).constrained.shape == c.shape
+    assert LinearDeformer(V, F, column).constrained.shape == c.shape
+
+
+def test_unknown_clamp_is_rejected_for_uniform_weights_too(bar):
+    V, F = bar
+    with pytest.raises(ValueError, match="clamp must be one of"):
+        ARAPDeformer(V, F, bar_bend(V)[0], weights="uniform", clamp="bogus")
+
+
+def test_local_step_is_the_weighted_optimum_at_every_vertex(bunny, rng):
+    # Paper Eq. 5-6 with a covariance built here from its definition: R_i S_i
+    # is symmetric at the optimum, and Tr(R_i S_i) is the largest it can be.
+    V, F = bunny
+    X = V + 0.05 * rng.normal(size=V.shape)
+    d = ARAPDeformer(V, F, [0], clamp="none")
+    R = d.local_step(X)
+    W = lap.cotangent_weights(V, F, clamp="none").tocoo()
+    S = np.zeros((V.shape[0], 3, 3))
+    np.add.at(S, W.row, W.data[:, None, None] * (V[W.row] - V[W.col])[:, :, None]
+              * (X[W.row] - X[W.col])[:, None, :])
+    M = R @ S
+    scale = np.abs(S).max()
+    assert np.abs(M - np.swapaxes(M, 1, 2)).max() < 1e-9 * scale
+    s = np.linalg.svd(S, compute_uv=False)
+    best = s[:, 0] + s[:, 1] + np.sign(np.linalg.det(S)) * s[:, 2]
+    assert np.any(np.linalg.det(S) < 0.0)  # the reflection fix is exercised
+    assert np.abs(np.trace(M, axis1=1, axis2=2) - best).max() < 1e-9 * scale
+
+
+def test_result_fields_describe_the_returned_pose(bar):
+    V, F = bar
+    c, t, _, _ = bar_bend(V)
+    d = ARAPDeformer(V, F, c)
+    r = d.deform(t, max_iterations=7)
+    assert r.iterations == 7 and not r.converged and len(r.energies) == 8
+    R = d.local_step(r.vertices)
+    assert np.abs(r.rotations - R).max() < 1e-12
+    assert np.isclose(r.energies[-1], d.energy(r.vertices, R), rtol=1e-12)
+    assert np.isclose(r.energies[0], d.energy(r.initial_guess, d.local_step(r.initial_guess)),
+                      rtol=1e-12)
+    assert np.isclose(d.diagonal, np.linalg.norm(V.max(axis=0) - V.min(axis=0)))
+
+
+def test_stopping_rule_is_the_documented_one(bar):
+    # Each criterion alone stops exactly where its definition says, and the
+    # default rule stops at the first iteration that meets both.
+    V, F = bar
+    c, t, _, _ = bar_bend(V)
+    d = ARAPDeformer(V, F, c)
+    long = d.deform(t, max_iterations=300, energy_tol=0.0, step_tol=0.0,
+                    snapshot_iterations=range(301))
+    E = np.asarray(long.energies)
+    decrease = (E[:-1] - E[1:]) / E[0]  # of iteration k at index k - 1
+    move = np.array([np.linalg.norm(long.snapshots[k] - long.snapshots[k - 1], axis=1).max()
+                     for k in range(1, 301)]) / d.diagonal
+    first_energy = 1 + int(np.argmax(decrease < 1e-6))
+    first_step = 1 + int(np.argmax(move < 1e-5))
+    first_both = 1 + int(np.argmax((decrease < 1e-6) & (move < 1e-5)))
+    assert 1 < first_energy < first_step < 300
+    assert d.deform(t, step_tol=np.inf).iterations == first_energy
+    assert d.deform(t, energy_tol=np.inf).iterations == first_step
+    assert d.deform(t).iterations == first_both
+
+
+@pytest.mark.parametrize("rule", [dict(step_tol=np.inf), dict()])
+def test_stopping_rule_does_not_depend_on_the_scale_of_the_mesh(bar, rule):
+    # 64 is a power of two, so the arithmetic is the same up to exponents.
+    V, F = bar
+    c, t, _, _ = bar_bend(V)
+    a = ARAPDeformer(V, F, c).deform(t, **rule)
+    b = ARAPDeformer(64.0 * V, F, c).deform(64.0 * t, **rule)
+    assert a.converged and b.converged and a.iterations == b.iterations
+
+
+def test_rest_guess_moves_only_the_constrained_vertices(bar):
+    V, F = bar
+    c, t, _, _ = bar_bend(V)
+    g = ARAPDeformer(V, F, c).initial_guess(t, "rest")
+    free = np.setdiff1d(np.arange(V.shape[0]), c)
+    assert np.array_equal(g[c], t) and np.array_equal(g[free], V[free])
+
+
+@pytest.mark.parametrize("options", [dict(clamp="none"), dict(weights="uniform")])
+def test_thin_plate_guess_uses_the_deformers_own_weights(bunny, options):
+    V, F = bunny
+    ears = selection.by_coordinate(V, "y", above=0.8)
+    c, t = selection.combine(V, selection.by_coordinate(V, "y", below=0.15), ears,
+                             V[ears] + [-0.45, -0.15, 0.0])
+    expected = LinearDeformer(V, F, c, method="thin_plate", **options).deform(t)
+    default = LinearDeformer(V, F, c, method="thin_plate").deform(t)
+    got = ARAPDeformer(V, F, c, **options).initial_guess(t, "thin_plate")
+    assert np.abs(got - expected).max() < 1e-12
+    assert np.abs(expected - default).max() > 1e-6  # the options matter on this mesh

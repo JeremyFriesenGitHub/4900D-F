@@ -10,8 +10,11 @@ zero. Free vertices satisfy
 with the cotangent operator ``Delta = M^{-1} (W - D) = -M^{-1} L`` and ``M``
 the diagonal of mixed areas. For the membrane system the per-row area
 factor cancels, so ``Delta d = 0`` is the same as ``L d = 0``, i.e.
-``L p' = L p``. That is naive Laplacian editing, the initial guess the ARAP
-paper uses in its Fig. 3.
+``L p' = L p`` on the free vertices. That is the course's basic Laplacian
+deformation. The ARAP paper's Fig. 3 starts from a different form of naive
+Laplacian editing: the least-squares minimiser of ``||L p' - L p||^2`` over
+all rows, which is the thin-plate system below without the area weights
+(and equal to it where the vertex areas are equal, as on a regular bar).
 
 Constraints are imposed by elimination: the constrained columns move to the
 right-hand side and the free block stays symmetric positive definite, so it
@@ -26,6 +29,21 @@ from scipy.sparse.csgraph import connected_components
 from . import laplacian as lap
 
 
+def as_indices(constrained):
+    """Constrained vertex indices as a flat int64 array.
+
+    Only integer indices are accepted: a boolean mask or float values would
+    otherwise be cast to indices without any warning.
+    """
+    c = np.asarray(constrained)
+    if c.size and not np.issubdtype(c.dtype, np.integer):
+        raise TypeError(
+            "constrained must hold integer vertex indices "
+            "(for a boolean mask pass np.flatnonzero(mask))"
+        )
+    return c.astype(np.int64).ravel()
+
+
 class ConstrainedSolver:
     """Factorised solver for ``K x = rhs`` with ``x[constrained]`` prescribed.
 
@@ -38,7 +56,7 @@ class ConstrainedSolver:
     def __init__(self, K, constrained):
         K = sp.csr_matrix(K)
         n = K.shape[0]
-        constrained = np.asarray(constrained, dtype=np.int64).ravel()
+        constrained = as_indices(constrained)
         if constrained.size == 0:
             raise ValueError("at least one constrained vertex is required")
         if constrained.min() < 0 or constrained.max() >= n:
@@ -88,7 +106,7 @@ class ConstrainedSolver:
 
 
 def _check_targets(vertices, constrained, targets):
-    constrained = np.asarray(constrained, dtype=np.int64)
+    constrained = as_indices(constrained)
     targets = np.asarray(targets, dtype=np.float64)
     if targets.shape != (constrained.size, 3):
         raise ValueError(
@@ -96,6 +114,8 @@ def _check_targets(vertices, constrained, targets):
         )
     if np.unique(constrained).size != constrained.size:
         raise ValueError("constrained indices must be unique")
+    if not np.isfinite(targets).all():
+        raise ValueError("targets contain NaN or infinite values")
     return constrained, targets
 
 
@@ -114,7 +134,7 @@ class LinearDeformer:
                  weights="cotangent", clamp="zero"):
         self.vertices = np.asarray(vertices, dtype=np.float64)
         self.faces = np.asarray(faces, dtype=np.int64)
-        self.constrained = np.asarray(constrained, dtype=np.int64)
+        self.constrained = as_indices(constrained)
         self.method = method
         L, _ = lap.mesh_laplacian(self.vertices, self.faces, weights=weights, clamp=clamp)
         if method == "laplacian":

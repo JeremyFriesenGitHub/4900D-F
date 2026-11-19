@@ -108,8 +108,11 @@ def self_intersections(vertices, faces, chunk=256):
     Counts pairs of an edge and a triangle that share no vertex and where the
     edge crosses the inside of the triangle (Moller-Trumbore test). Two
     sheets of surface that cross along a curve give a count that grows with
-    the length of that curve, so 0 means the surface does not cross itself
-    and the size of a nonzero count is only a rough measure.
+    the length of that curve, so the size of a nonzero count is only a rough
+    measure. A crossing that lands exactly on an edge or a vertex of the
+    triangle is not counted, so 0 means "no crossing through the inside of a
+    triangle": a surface whose crossings all lie exactly on mesh edges (as
+    happens when Laplacian editing shears a regular bar) is reported as 0.
     """
     V = np.asarray(vertices, dtype=np.float64)
     F = np.asarray(faces, dtype=np.int64)
@@ -132,7 +135,11 @@ def self_intersections(vertices, faces, chunk=256):
         D = Q[i] - P[i]
         h = np.cross(D, e2[j])
         det = np.einsum("ij,ij->i", e1[j], h)
-        ok = np.abs(det) > eps
+        # det is a triple product of three edge vectors, so the test for a
+        # parallel edge and triangle is made relative to their lengths.
+        size = (np.linalg.norm(e1[j], axis=1) * np.linalg.norm(e2[j], axis=1)
+                * np.linalg.norm(D, axis=1))
+        ok = np.abs(det) > eps * size
         inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
         s = P[i] - A[j]
         u = inv * np.einsum("ij,ij->i", s, h)

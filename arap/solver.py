@@ -28,7 +28,7 @@ import scipy.sparse as sp
 from scipy.sparse.csgraph import connected_components
 
 from . import laplacian as lap
-from .linear import ConstrainedSolver, LinearDeformer, _check_targets
+from .linear import ConstrainedSolver, LinearDeformer, _check_targets, as_indices
 from .rotations import fit_rotations
 
 
@@ -68,7 +68,7 @@ class ARAPDeformer:
         start = time.perf_counter()
         self.vertices = np.array(vertices, dtype=np.float64)
         self.faces = np.array(faces, dtype=np.int64)
-        self.constrained = np.asarray(constrained, dtype=np.int64).ravel()
+        self.constrained = as_indices(constrained)
         if np.unique(self.constrained).size != self.constrained.size:
             raise ValueError("constrained indices must be unique")
         self.weights = weights
@@ -147,9 +147,10 @@ class ARAPDeformer:
     def initial_guess(self, targets, method="laplacian"):
         """Starting positions for the iterations.
 
-        ``"laplacian"``  naive Laplacian editing, Delta d = 0 (course slides);
+        ``"laplacian"``  the course's Laplacian deformation, Delta d = 0;
                          identical to one global step with all R_i = I.
-        ``"thin_plate"`` Delta^2 d = 0 from the course slides.
+        ``"thin_plate"`` Delta^2 d = 0 from the course slides (close to the
+                         least-squares guess of the paper's Fig. 3).
         ``"rest"``       the rest pose with the constrained vertices moved.
         """
         constrained, targets = self._targets(targets)
@@ -172,7 +173,7 @@ class ARAPDeformer:
         return _check_targets(self.vertices, self.constrained, targets)
 
     # ------------------------------------------------------------- iteration
-    def deform(self, targets, init="laplacian", max_iterations=500,
+    def deform(self, targets, init="laplacian", max_iterations=1000,
                energy_tol=1e-6, step_tol=1e-5, snapshot_iterations=()):
         """Run the local/global iterations until convergence.
 
@@ -206,6 +207,8 @@ class ARAPDeformer:
             current = np.array(init, dtype=np.float64)
             if current.shape != self.vertices.shape:
                 raise ValueError("explicit initial guess must have shape (n, 3)")
+            if not np.isfinite(current).all():
+                raise ValueError("explicit initial guess contains NaN or infinite values")
             current[constrained] = targets
         guess = current.copy()
         timings["initial_guess"] = time.perf_counter() - start

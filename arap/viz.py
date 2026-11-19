@@ -16,14 +16,16 @@ _UP = {"z": [0, 1, 2], "y": [2, 0, 1], "x": [1, 2, 0]}
 LIGHT = np.array([0.35, -0.55, 0.75])
 
 
-def _face_colors(vertices, faces, vertex_colors=None):
+def _face_colors(vertices, faces, vertex_colors=None, face_colors=None):
     V = np.asarray(vertices)
     F = np.asarray(faces)
     n = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
     n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
     light = LIGHT / np.linalg.norm(LIGHT)
     shade = 0.35 + 0.65 * np.abs(n @ light)
-    if vertex_colors is None:
+    if face_colors is not None:
+        base = np.asarray(face_colors, dtype=np.float64)
+    elif vertex_colors is None:
         base = np.tile(BASE_COLOR, (F.shape[0], 1))
     else:
         base = np.asarray(vertex_colors)[F].mean(axis=1)
@@ -35,7 +37,8 @@ def render_panels(panels, path, view=(20, -60), title=None, panel_size=3.2,
     """Render meshes side by side with a shared scale.
 
     ``panels`` is a list of dicts with keys ``vertices``, ``faces`` and
-    optional ``title``, ``colors`` (per-vertex RGB) and ``view``. ``view`` is
+    optional ``title``, ``colors`` (per-vertex RGB), ``face_colors`` (per-face
+    RGB, used instead of ``colors`` when given) and ``view``. ``view`` is
     ``(elevation, azimuth)`` in degrees and ``vertical_axis`` the axis drawn
     upwards ("y" for most scanned models).
     """
@@ -49,8 +52,9 @@ def render_panels(panels, path, view=(20, -60), title=None, panel_size=3.2,
         ax = fig.add_subplot(1, k, idx + 1, projection="3d")
         V = np.asarray(p["vertices"])[:, order]
         F = np.asarray(p["faces"])
-        coll = Poly3DCollection(V[F], facecolors=_face_colors(V, F, p.get("colors")),
-                                edgecolors="none", linewidths=0.0)
+        fc = _face_colors(V, F, p.get("colors"), p.get("face_colors"))
+        # Edges in the face colour close the hairline gaps between polygons.
+        coll = Poly3DCollection(V[F], facecolors=fc, edgecolors=fc, linewidths=0.3)
         ax.add_collection3d(coll)
         for setter, c in zip((ax.set_xlim, ax.set_ylim, ax.set_zlim), center):
             setter(c - half, c + half)
